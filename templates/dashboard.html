@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BrandBridge Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <main class="max-w-5xl mx-auto px-6 py-10">
+    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
+      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
+      {% if user %}
+        <div class="flex items-center gap-3">
+          <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
+          <form action="/ui/logout" method="post">
+            <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
+          </form>
+        </div>
+      {% else %}
+        <span class="text-sm text-gray-500">Not logged in</span>
+      {% endif %}
+    </div>
+    <a href="/" class="text-sm text-blue-700">&larr; Home</a>
+    <h1 class="text-2xl font-bold mt-2">Dashboard</h1>
+
+    {% if user %}
+      <div class="mt-4 bg-white shadow rounded-xl p-6 space-y-2">
+        <p><span class="font-semibold">Email:</span> {{ user.email }}</p>
+        <p><span class="font-semibold">Role:</span> {{ user.role.value }}</p>
+        {% if profile %}
+          <p><span class="font-semibold">Profile Type:</span> {{ profile.profile_type.value }}</p>
+          <p><span class="font-semibold">Status:</span> {{ profile.status.value }}</p>
+        {% else %}
+          <p class="text-amber-700">No profile created yet. Use API endpoints to create one.</p>
+        {% endif %}
+      </div>
+
+      <div class="mt-6 bg-white shadow rounded-xl p-6">
+        <h2 class="text-lg font-semibold mb-3">Static Message Templates</h2>
+        <ul class="list-disc pl-5 space-y-1 text-sm text-gray-700">
+          {% for item in templates %}
+            <li>{{ item }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% else %}
+      <div class="mt-4 bg-white shadow rounded-xl p-6 text-red-700">
+        You are not logged in. Please login from home page.
+      </div>
+    {% endif %}
+  </main>
+</body>
+</html>

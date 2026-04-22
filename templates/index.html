@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BrandBridge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <main class="max-w-5xl mx-auto px-6 py-10">
+    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
+      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
+      {% if user %}
+        <div class="flex items-center gap-3">
+          <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
+          <form action="/ui/logout" method="post">
+            <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
+          </form>
+        </div>
+      {% else %}
+        <span class="text-sm text-gray-500">Not logged in</span>
+      {% endif %}
+    </div>
+    <h1 class="text-3xl font-bold mb-2">BrandBridge</h1>
+    <p class="text-gray-600 mb-8">Collaboration platform for Advertisers and Brands.</p>
+    {% if success %}
+      <div class="mb-6 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">
+        {{ success }}
+      </div>
+    {% endif %}
+    {% if error %}
+      <div class="mb-6 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">
+        {{ error }}
+      </div>
+    {% endif %}
+
+    {% if user %}
+      <section class="bg-white rounded-xl shadow p-6">
+        <h2 class="text-xl font-semibold mb-2">You are already logged in</h2>
+        <p class="text-gray-600 mb-4">Continue to your dashboard or logout from your account.</p>
+        <div class="flex items-center gap-3">
+          <a href="/dashboard" class="inline-block bg-blue-600 text-white px-4 py-2 rounded text-sm">Go to Dashboard</a>
+          <form action="/ui/logout" method="post">
+            <button type="submit" class="bg-red-600 text-white px-4 py-2 rounded text-sm">Logout</button>
+          </form>
+        </div>
+      </section>
+    {% else %}
+      <div class="grid md:grid-cols-2 gap-6">
+        <section class="bg-white rounded-xl shadow p-6">
+          <h2 class="text-xl font-semibold mb-4">Register</h2>
+          <form action="/ui/register" method="post" class="space-y-3">
+            <input class="w-full border rounded p-2" name="email" type="email" placeholder="email@example.com" required />
+            <input class="w-full border rounded p-2" name="password" type="password" placeholder="password" required />
+            <button class="w-full bg-blue-600 text-white py-2 rounded">Create Account</button>
+          </form>
+          <p class="text-xs text-gray-500 mt-3">Tip: emails ending with @admin.com become Admin users.</p>
+        </section>
+
+        <section class="bg-white rounded-xl shadow p-6">
+          <h2 class="text-xl font-semibold mb-4">Login</h2>
+          <form action="/ui/login" method="post" class="space-y-3">
+            <input class="w-full border rounded p-2" name="email" type="email" placeholder="email@example.com" required />
+            <input class="w-full border rounded p-2" name="password" type="password" placeholder="password" required />
+            <button class="w-full bg-emerald-600 text-white py-2 rounded">Login</button>
+          </form>
+          <a href="/dashboard" class="inline-block mt-4 text-blue-700 text-sm">Go to dashboard</a>
+        </section>
+      </div>
+    {% endif %}
+  </main>
+</body>
+</html>
