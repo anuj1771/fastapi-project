@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
@@ -42,6 +43,17 @@ def _ensure_no_profile(user: models.User, db: Session):
     existing = db.query(models.Profile).filter(models.Profile.user_id == user.id).first()
     if existing:
         raise HTTPException(status_code=400, detail="User already has a profile")
+
+
+def _get_basic_profile_map(db: Session, user_id: int) -> dict[str, models.BasicProfile]:
+    rows = db.query(models.BasicProfile).filter(models.BasicProfile.user_id == user_id).all()
+    return {row.profile_type.value: row for row in rows}
+
+
+def _is_basic_profile_complete(profile: models.BasicProfile | None) -> bool:
+    if not profile:
+        return False
+    return bool(profile.name and profile.name.strip() and profile.phone_number and profile.phone_number.strip())
 
 
 def _get_approved_profile(db: Session, user_id: int) -> models.Profile:
@@ -348,6 +360,44 @@ def templates_list(_: models.User = Depends(get_current_user)):
     return TEMPLATES
 
 
+@app.get("/basic-profiles", response_model=list[schemas.BasicProfileOut])
+def get_basic_profiles(
+    current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    return db.query(models.BasicProfile).filter(models.BasicProfile.user_id == current_user.id).all()
+
+
+@app.post("/basic-profiles", response_model=schemas.BasicProfileOut)
+def upsert_basic_profile(
+    payload: schemas.BasicProfileUpsert,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    profile = (
+        db.query(models.BasicProfile)
+        .filter(
+            models.BasicProfile.user_id == current_user.id,
+            models.BasicProfile.profile_type == payload.profile_type,
+        )
+        .first()
+    )
+    if profile:
+        profile.name = payload.name.strip()
+        profile.phone_number = payload.phone_number.strip()
+        profile.updated_at = datetime.utcnow()
+    else:
+        profile = models.BasicProfile(
+            user_id=current_user.id,
+            profile_type=payload.profile_type,
+            name=payload.name.strip(),
+            phone_number=payload.phone_number.strip(),
+        )
+        db.add(profile)
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
 @app.post("/ui/register")
 def ui_register(
     email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)
@@ -396,6 +446,57 @@ def ui_logout_post():
 @app.get("/ui/logout")
 def ui_logout_get():
     return _logout_response()
+
+
+@app.get("/profile", response_class=HTMLResponse)
+def profile_page(request: Request, db: Session = Depends(get_db)):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    display_name = user.email.split("@")[0]
+    profile_map = _get_basic_profile_map(db, user.id)
+    advertiser_profile = profile_map.get(models.ProfileType.ADVERTISER.value)
+    brand_profile = profile_map.get(models.ProfileType.BRAND.value)
+    return templates.TemplateResponse(
+        request,
+        "profile.html",
+        {
+            "request": request,
+            "user": user,
+            "display_name": display_name,
+            "advertiser_profile": advertiser_profile,
+            "brand_profile": brand_profile,
+            "advertiser_complete": _is_basic_profile_complete(advertiser_profile),
+            "brand_complete": _is_basic_profile_complete(brand_profile),
+            "success": request.query_params.get("success"),
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@app.post("/ui/profile/save")
+def ui_profile_save(
+    request: Request,
+    profile_type: str = Form(...),
+    name: str = Form(...),
+    phone_number: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    try:
+        parsed_type = models.ProfileType(profile_type)
+        payload = schemas.BasicProfileUpsert(
+            profile_type=parsed_type, name=name, phone_number=phone_number
+        )
+        upsert_basic_profile(payload, user, db)
+    except ValidationError as exc:
+        first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid profile input."
+        return RedirectResponse(url=f"/profile?error={first_error}", status_code=303)
+    except Exception:
+        return RedirectResponse(url="/profile?error=Failed to save profile details.", status_code=303)
+    return RedirectResponse(url="/profile?success=Profile saved successfully.", status_code=303)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)

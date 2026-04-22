@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BrandBridge Profiles</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <main class="max-w-5xl mx-auto px-6 py-10">
+    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
+      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
+        <form action="/ui/logout" method="post">
+          <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold">Your Profiles</h1>
+      <a href="/dashboard" class="text-sm text-blue-700">Go to Dashboard</a>
+    </div>
+
+    {% if success %}
+      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">
+        {{ success }}
+      </div>
+    {% endif %}
+    {% if error %}
+      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">
+        {{ error }}
+      </div>
+    {% endif %}
+
+    <div class="grid md:grid-cols-2 gap-6">
+      <section class="bg-white rounded-xl shadow p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold">Advertiser Profile</h2>
+          {% if advertiser_complete %}
+            <span class="text-xs font-semibold px-2 py-1 rounded-full bg-green-100 text-green-700">Complete</span>
+          {% else %}
+            <span class="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-700">Incomplete</span>
+          {% endif %}
+        </div>
+        <form action="/ui/profile/save" method="post" class="space-y-3">
+          <input type="hidden" name="profile_type" value="advertiser" />
+          <input class="w-full border rounded p-2" name="name" type="text" placeholder="Name" value="{{ advertiser_profile.name if advertiser_profile else '' }}" required />
+          <input class="w-full border rounded p-2" name="phone_number" type="text" placeholder="Phone Number (10-15 digits)" value="{{ advertiser_profile.phone_number if advertiser_profile else '' }}" minlength="10" maxlength="15" pattern="[0-9]{10,15}" required />
+          <button class="w-full bg-indigo-600 text-white py-2 rounded">Save Advertiser Profile</button>
+        </form>
+        <p class="text-xs text-gray-500 mt-2">Phone must contain only digits, length 10 to 15.</p>
+      </section>
+
+      <section class="bg-white rounded-xl shadow p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold">Brand Profile</h2>
+          {% if brand_complete %}
+            <span class="text-xs font-semibold px-2 py-1 rounded-full bg-green-100 text-green-700">Complete</span>
+          {% else %}
+            <span class="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-700">Incomplete</span>
+          {% endif %}
+        </div>
+        <form action="/ui/profile/save" method="post" class="space-y-3">
+          <input type="hidden" name="profile_type" value="brand" />
+          <input class="w-full border rounded p-2" name="name" type="text" placeholder="Name" value="{{ brand_profile.name if brand_profile else '' }}" required />
+          <input class="w-full border rounded p-2" name="phone_number" type="text" placeholder="Phone Number (10-15 digits)" value="{{ brand_profile.phone_number if brand_profile else '' }}" minlength="10" maxlength="15" pattern="[0-9]{10,15}" required />
+          <button class="w-full bg-indigo-600 text-white py-2 rounded">Save Brand Profile</button>
+        </form>
+        <p class="text-xs text-gray-500 mt-2">Phone must contain only digits, length 10 to 15.</p>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -43,6 +44,7 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     profile = relationship("Profile", back_populates="user", uselist=False)
+    basic_profiles = relationship("BasicProfile", back_populates="user")
     sent_messages = relationship(
         "Message", back_populates="sender", foreign_keys="Message.sender_id"
     )
@@ -87,3 +89,20 @@ class Message(Base):
     receiver = relationship(
         "User", foreign_keys=[receiver_id], back_populates="received_messages"
     )
+
+
+class BasicProfile(Base):
+    __tablename__ = "basic_profiles"
+    __table_args__ = (
+        UniqueConstraint("user_id", "profile_type", name="uq_basic_profile_user_type"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    profile_type = Column(SqlEnum(ProfileType), nullable=False)
+    name = Column(String(120), nullable=False)
+    phone_number = Column(String(30), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User", back_populates="basic_profiles")
