@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BrandBridge Chat</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #eceff4;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .topbar {
+            padding: 12px 18px;
+            background: #ffffff;
+            border-bottom: 1px solid #d8dbe3;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .topbar a { color: #2463eb; text-decoration: none; }
+        .layout {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            height: calc(100vh - 58px);
+        }
+        .sidebar {
+            background: #f8fafc;
+            border-right: 1px solid #d8dbe3;
+            display: flex;
+            flex-direction: column;
+        }
+        .profile {
+            padding: 14px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 14px;
+            color: #334155;
+        }
+        .search-box {
+            padding: 10px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .search-box input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+        }
+        .contact-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+        .contact {
+            width: 100%;
+            border: 0;
+            background: transparent;
+            padding: 12px 14px;
+            text-align: left;
+            cursor: pointer;
+            border-bottom: 1px solid #eef2f7;
+        }
+        .contact:hover { background: #eef4ff; }
+        .contact.active { background: #dbeafe; }
+        .contact .name { font-size: 14px; color: #0f172a; font-weight: 600; }
+        .contact .meta { font-size: 12px; color: #64748b; margin-top: 4px; }
+        .chat {
+            display: flex;
+            flex-direction: column;
+            background: #f1f5f9;
+        }
+        .chat-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #d8dbe3;
+            background: #ffffff;
+            font-size: 14px;
+            color: #0f172a;
+            min-height: 52px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .status.online { color: #059669; }
+        .status.offline { color: #b45309; }
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .bubble {
+            max-width: 70%;
+            padding: 10px 12px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.3;
+            word-break: break-word;
+        }
+        .bubble.me {
+            align-self: flex-end;
+            background: #3b82f6;
+            color: #ffffff;
+            border-bottom-right-radius: 4px;
+        }
+        .bubble.other {
+            align-self: flex-start;
+            background: #e2e8f0;
+            color: #0f172a;
+            border-bottom-left-radius: 4px;
+        }
+        .muted { color: #64748b; font-size: 13px; }
+        .composer {
+            padding: 12px;
+            border-top: 1px solid #d8dbe3;
+            background: #ffffff;
+            display: flex;
+            gap: 10px;
+        }
+        .composer input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+        .composer button {
+            padding: 10px 18px;
+            border: 0;
+            border-radius: 10px;
+            background: #2563eb;
+            color: #ffffff;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .composer button:disabled {
+            background: #93c5fd;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <strong>BrandBridge Chat</strong>
+        <a href="/dashboard">Back to dashboard</a>
+    </div>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="profile">
+                Logged in as <strong>{{ user.email }}</strong>
+            </div>
+            <div class="search-box">
+                <input id="searchInput" placeholder="Search user..." />
+            </div>
+            <div id="contactList" class="contact-list"></div>
+        </aside>
+
+        <section class="chat">
+            <div class="chat-header">
+                <div id="chatTitle">Select a user to start chat</div>
+                <div id="socketStatus" class="status offline">Disconnected</div>
+            </div>
+            <div id="messages" class="messages">
+                <div class="muted">No conversation selected.</div>
+            </div>
+            <div class="composer">
+                <input id="messageInput" placeholder="Type a message..." />
+                <button id="sendBtn" type="button" disabled>Send</button>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const currentUserId = Number("{{ user.id }}");
+        const contactList = document.getElementById("contactList");
+        const searchInput = document.getElementById("searchInput");
+        const chatTitle = document.getElementById("chatTitle");
+        const socketStatus = document.getElementById("socketStatus");
+        const messages = document.getElementById("messages");
+        const messageInput = document.getElementById("messageInput");
+        const sendBtn = document.getElementById("sendBtn");
+
+        let socket = null;
+        let users = [];
+        let activePartnerId = null;
+        const historyByPartner = {};
+
+        function escapeHtml(text) {
+            return String(text)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;");
+        }
+
+        function formatTime(isoValue) {
+            const date = new Date(isoValue);
+            return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        }
+
+        function renderContacts() {
+            const query = searchInput.value.trim().toLowerCase();
+            const filtered = users.filter((u) => u.email.toLowerCase().includes(query));
+            if (!filtered.length) {
+                contactList.innerHTML = '<div class="muted" style="padding: 12px;">No users found</div>';
+                return;
+            }
+
+            contactList.innerHTML = filtered
+                .map((u) => `
+                    <button class="contact ${u.id === activePartnerId ? "active" : ""}" data-id="${u.id}">
+                        <div class="name">${escapeHtml(u.email)}</div>
+                        <div class="meta">User ID: ${u.id}</div>
+                    </button>
+                `)
+                .join("");
+
+            document.querySelectorAll(".contact").forEach((item) => {
+                item.addEventListener("click", async () => {
+                    const id = Number(item.getAttribute("data-id"));
+                    await selectPartner(id);
+                });
+            });
+        }
+
+        function renderMessages(partnerId) {
+            const items = historyByPartner[partnerId] || [];
+            if (!items.length) {
+                messages.innerHTML = '<div class="muted">No messages yet. Say hello!</div>';
+                return;
+            }
+            messages.innerHTML = items
+                .map((m) => {
+                    const isMine = m.sender_id === currentUserId;
+                    return `
+                        <div class="bubble ${isMine ? "me" : "other"}">
+                            ${escapeHtml(m.content)}
+                            <div style="margin-top: 4px; font-size: 11px; opacity: 0.8;">${formatTime(m.created_at)}</div>
+                        </div>
+                    `;
+                })
+                .join("");
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        async function fetchUsers() {
+            const res = await fetch("/users/discovery");
+            if (!res.ok) {
+                contactList.innerHTML = '<div class="muted" style="padding: 12px;">Failed to load users</div>';
+                return;
+            }
+            users = await res.json();
+            renderContacts();
+        }
+
+        async function fetchHistory(partnerId) {
+            const res = await fetch(`/chat/${partnerId}`);
+            if (!res.ok) {
+                historyByPartner[partnerId] = [];
+                return;
+            }
+            historyByPartner[partnerId] = await res.json();
+        }
+
+        async function selectPartner(partnerId) {
+            activePartnerId = partnerId;
+            const partner = users.find((u) => u.id === partnerId);
+            chatTitle.textContent = partner ? partner.email : `User ${partnerId}`;
+            sendBtn.disabled = false;
+            if (!historyByPartner[partnerId]) {
+                await fetchHistory(partnerId);
+            }
+            renderContacts();
+            renderMessages(partnerId);
+        }
+
+        function insertIncomingMessage(event) {
+            const partnerId = event.sender_id === currentUserId ? event.receiver_id : event.sender_id;
+            if (!historyByPartner[partnerId]) {
+                historyByPartner[partnerId] = [];
+            }
+            historyByPartner[partnerId].push(event);
+            if (partnerId === activePartnerId) {
+                renderMessages(partnerId);
+            }
+        }
+
+        function connectSocket() {
+            const protocol = location.protocol === "https:" ? "wss" : "ws";
+            socket = new WebSocket(`${protocol}://${location.host}/ws/chat`);
+
+            socket.onopen = () => {
+                socketStatus.textContent = "Connected";
+                socketStatus.className = "status online";
+            };
+            socket.onclose = () => {
+                socketStatus.textContent = "Disconnected";
+                socketStatus.className = "status offline";
+                setTimeout(connectSocket, 1500);
+            };
+            socket.onerror = () => {
+                socketStatus.textContent = "Error";
+                socketStatus.className = "status offline";
+            };
+            socket.onmessage = (raw) => {
+                const event = JSON.parse(raw.data);
+                if (event.type === "private_message") {
+                    insertIncomingMessage(event);
+                }
+            };
+        }
+
+        function sendMessage() {
+            if (!socket || socket.readyState !== WebSocket.OPEN || !activePartnerId) {
+                return;
+            }
+            const content = messageInput.value.trim();
+            if (!content) {
+                return;
+            }
+            socket.send(JSON.stringify({ receiver_id: activePartnerId, content }));
+            messageInput.value = "";
+        }
+
+        searchInput.addEventListener("input", renderContacts);
+        sendBtn.addEventListener("click", sendMessage);
+        messageInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        fetchUsers();
+        connectSocket();
+    </script>
+</body>
+</html>

@@ -107,6 +107,11 @@ class UserListItem(BaseModel):
     profile_type: ProfileType
 
 
+class RegisteredUserItem(BaseModel):
+    id: int
+    email: EmailStr
+
+
 class BasicProfileUpsert(BaseModel):
     profile_type: ProfileType
     name: str = Field(max_length=120)

@@ -24,6 +24,9 @@
     </div>
 
     <a href="/" class="text-sm text-blue-700">&larr; Home</a>
+    {% if user %}
+      <a href="/chat-demo" class="ml-4 text-sm text-blue-700">Open chat demo</a>
+    {% endif %}
     <h1 class="text-2xl font-bold mt-2">Dashboard</h1>
 
     {% if user %}

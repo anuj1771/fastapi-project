@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -27,6 +27,41 @@ TEMPLATES = [
     "Thanks for reaching out. Let's discuss campaign details.",
     "Can we schedule a short call to discuss partnership?",
 ]
+
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[int, set[WebSocket]] = {}
+
+    async def connect(self, user_id: int, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.setdefault(user_id, set()).add(websocket)
+
+    def disconnect(self, user_id: int, websocket: WebSocket):
+        user_connections = self.active_connections.get(user_id)
+        if not user_connections:
+            return
+        user_connections.discard(websocket)
+        if not user_connections:
+            self.active_connections.pop(user_id, None)
+
+    async def send_to_user(self, user_id: int, message: dict):
+        sockets = self.active_connections.get(user_id, set())
+        disconnected: list[WebSocket] = []
+        for socket in sockets:
+            try:
+                await socket.send_json(message)
+            except RuntimeError:
+                disconnected.append(socket)
+        for socket in disconnected:
+            self.disconnect(user_id, socket)
+
+    async def send_to_pair(self, sender_id: int, receiver_id: int, message: dict):
+        await self.send_to_user(receiver_id, message)
+        await self.send_to_user(sender_id, message)
+
+
+manager = ConnectionManager()
 
 
 def _get_user_from_cookie(request: Request, db: Session) -> models.User | None:
@@ -72,6 +107,17 @@ def _validate_chat_pair(sender_profile: models.Profile, receiver_profile: models
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only Brand <-> Advertiser chat is allowed",
         )
+
+
+def _get_ws_user(websocket: WebSocket, db: Session) -> models.User:
+    token = websocket.query_params.get("token") or websocket.cookies.get("token")
+    user_id = auth.decode_token(token) if token else None
+    if not user_id or not user_id.isdigit():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    user = db.query(models.User).filter(models.User.id == int(user_id)).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    return user
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -292,18 +338,23 @@ def available_users(
     ]
 
 
+@app.get("/users/discovery", response_model=list[schemas.RegisteredUserItem])
+def discover_users(
+    current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    users = db.query(models.User).filter(models.User.id != current_user.id).all()
+    return [schemas.RegisteredUserItem(id=user.id, email=user.email) for user in users]
+
+
 @app.post("/chat/send", response_model=schemas.MessageOut)
 def send_message(
     payload: schemas.ChatSendRequest,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    sender_profile = _get_approved_profile(db, current_user.id)
     receiver = db.query(models.User).filter(models.User.id == payload.receiver_id).first()
     if not receiver:
         raise HTTPException(status_code=404, detail="Receiver not found")
-    receiver_profile = _get_approved_profile(db, receiver.id)
-    _validate_chat_pair(sender_profile, receiver_profile)
 
     content = payload.content
     if payload.use_template:
@@ -324,16 +375,80 @@ def send_message(
     return message
 
 
+@app.websocket("/ws/chat")
+async def websocket_chat(websocket: WebSocket, db: Session = Depends(get_db)):
+    try:
+        current_user = _get_ws_user(websocket, db)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+
+    await manager.connect(current_user.id, websocket)
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            receiver_id = payload.get("receiver_id")
+            content = payload.get("content", "")
+            use_template = bool(payload.get("use_template", False))
+
+            if not isinstance(receiver_id, int):
+                await websocket.send_json({"type": "error", "detail": "receiver_id must be an integer"})
+                continue
+            if not isinstance(content, str) or not content.strip():
+                await websocket.send_json({"type": "error", "detail": "content is required"})
+                continue
+
+            receiver = db.query(models.User).filter(models.User.id == receiver_id).first()
+            if not receiver:
+                await websocket.send_json({"type": "error", "detail": "Receiver not found"})
+                continue
+
+            final_content = content.strip()
+            if use_template:
+                template_index = int(final_content) if final_content.isdigit() else 0
+                if template_index < 0 or template_index >= len(TEMPLATES):
+                    await websocket.send_json({"type": "error", "detail": "Invalid template index"})
+                    continue
+                final_content = TEMPLATES[template_index]
+
+            message = models.Message(
+                sender_id=current_user.id,
+                receiver_id=receiver_id,
+                content=final_content,
+                is_template=use_template,
+            )
+            db.add(message)
+            db.commit()
+            db.refresh(message)
+
+            event = {
+                "type": "private_message",
+                "id": message.id,
+                "sender_id": message.sender_id,
+                "receiver_id": message.receiver_id,
+                "content": message.content,
+                "is_template": message.is_template,
+                "created_at": message.created_at.isoformat(),
+            }
+            await manager.send_to_pair(current_user.id, receiver_id, event)
+    except WebSocketDisconnect:
+        manager.disconnect(current_user.id, websocket)
+    except HTTPException as exc:
+        await websocket.send_json({"type": "error", "detail": str(exc.detail)})
+        manager.disconnect(current_user.id, websocket)
+        await websocket.close(code=1008)
+    except Exception:
+        manager.disconnect(current_user.id, websocket)
+        await websocket.close(code=1011)
+
+
 @app.get("/chat/{user_id}", response_model=list[schemas.MessageOut])
 def chat_history(
     user_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    sender_profile = _get_approved_profile(db, current_user.id)
     other = db.query(models.User).filter(models.User.id == user_id).first()
     if not other:
         raise HTTPException(status_code=404, detail="User not found")
-    other_profile = _get_approved_profile(db, other.id)
-    _validate_chat_pair(sender_profile, other_profile)
 
     messages = (
         db.query(models.Message)
@@ -515,5 +630,21 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "profile": profile,
             "templates": TEMPLATES,
             "display_name": display_name,
+        },
+    )
+
+
+@app.get("/chat-demo", response_class=HTMLResponse)
+def chat_demo(request: Request, db: Session = Depends(get_db)):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "chat_demo.html",
+        {
+            "request": request,
+            "user": user,
+            "display_name": user.email.split("@")[0],
         },
     )
