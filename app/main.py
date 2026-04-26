@@ -139,6 +139,100 @@ def _get_ws_user(websocket: WebSocket, db: Session) -> models.User:
     return user
 
 
+def _has_existing_conversation(db: Session, user_a_id: int, user_b_id: int) -> bool:
+    existing = (
+        db.query(models.Message.id)
+        .filter(
+            or_(
+                and_(
+                    models.Message.sender_id == user_a_id,
+                    models.Message.receiver_id == user_b_id,
+                ),
+                and_(
+                    models.Message.sender_id == user_b_id,
+                    models.Message.receiver_id == user_a_id,
+                ),
+            )
+        )
+        .first()
+    )
+    return bool(existing)
+
+
+def _can_chat_by_job_rules(db: Session, current_user_id: int, other_user_id: int) -> bool:
+    if current_user_id == other_user_id:
+        return False
+
+    if _has_existing_conversation(db, current_user_id, other_user_id):
+        return True
+
+    current_brand_profile = (
+        db.query(models.BasicProfile)
+        .filter(
+            models.BasicProfile.user_id == current_user_id,
+            models.BasicProfile.profile_type == models.ProfileType.BRAND,
+        )
+        .first()
+    )
+    current_advertiser_profile = (
+        db.query(models.BasicProfile)
+        .filter(
+            models.BasicProfile.user_id == current_user_id,
+            models.BasicProfile.profile_type == models.ProfileType.ADVERTISER,
+        )
+        .first()
+    )
+    other_brand_profile = (
+        db.query(models.BasicProfile)
+        .filter(
+            models.BasicProfile.user_id == other_user_id,
+            models.BasicProfile.profile_type == models.ProfileType.BRAND,
+        )
+        .first()
+    )
+    other_advertiser_profile = (
+        db.query(models.BasicProfile)
+        .filter(
+            models.BasicProfile.user_id == other_user_id,
+            models.BasicProfile.profile_type == models.ProfileType.ADVERTISER,
+        )
+        .first()
+    )
+
+    current_is_brand = _is_basic_profile_complete(current_brand_profile)
+    current_is_advertiser = _is_basic_profile_complete(current_advertiser_profile)
+    other_is_brand = _is_basic_profile_complete(other_brand_profile)
+    other_is_advertiser = _is_basic_profile_complete(other_advertiser_profile)
+
+    if current_is_brand and other_is_advertiser:
+        approved = (
+            db.query(models.JobApplication.id)
+            .join(models.Job, models.Job.id == models.JobApplication.job_id)
+            .filter(
+                models.Job.brand_user_id == current_user_id,
+                models.JobApplication.advertiser_user_id == other_user_id,
+                models.JobApplication.is_selected.is_(True),
+            )
+            .first()
+        )
+        return bool(approved)
+
+    if current_is_advertiser and other_is_brand:
+        selected = (
+            db.query(models.JobApplication.id)
+            .join(models.Job, models.Job.id == models.JobApplication.job_id)
+            .filter(
+                models.Job.brand_user_id == other_user_id,
+                models.JobApplication.advertiser_user_id == current_user_id,
+                models.JobApplication.is_selected.is_(True),
+            )
+            .first()
+        )
+        return bool(selected)
+
+    return False
+
+
 @app.get("/", response_class=HTMLResponse)
 def landing(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
@@ -362,7 +456,10 @@ def discover_users(
     current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     users = db.query(models.User).filter(models.User.id != current_user.id).all()
-    return [schemas.RegisteredUserItem(id=user.id, email=user.email) for user in users]
+    allowed_users = [
+        user for user in users if _can_chat_by_job_rules(db, current_user.id, user.id)
+    ]
+    return [schemas.RegisteredUserItem(id=user.id, email=user.email) for user in allowed_users]
 
 
 @app.post("/chat/send", response_model=schemas.MessageOut)
@@ -374,6 +471,8 @@ def send_message(
     receiver = db.query(models.User).filter(models.User.id == payload.receiver_id).first()
     if not receiver:
         raise HTTPException(status_code=404, detail="Receiver not found")
+    if not _can_chat_by_job_rules(db, current_user.id, payload.receiver_id):
+        raise HTTPException(status_code=403, detail="Chat is not allowed for this user yet")
 
     content = payload.content
     if payload.use_template:
@@ -420,6 +519,11 @@ async def websocket_chat(websocket: WebSocket, db: Session = Depends(get_db)):
             receiver = db.query(models.User).filter(models.User.id == receiver_id).first()
             if not receiver:
                 await websocket.send_json({"type": "error", "detail": "Receiver not found"})
+                continue
+            if not _can_chat_by_job_rules(db, current_user.id, receiver_id):
+                await websocket.send_json(
+                    {"type": "error", "detail": "Chat is not allowed for this user yet"}
+                )
                 continue
 
             final_content = content.strip()
@@ -468,6 +572,8 @@ def chat_history(
     other = db.query(models.User).filter(models.User.id == user_id).first()
     if not other:
         raise HTTPException(status_code=404, detail="User not found")
+    if not _can_chat_by_job_rules(db, current_user.id, user_id):
+        raise HTTPException(status_code=403, detail="Chat is not allowed for this user yet")
 
     messages = (
         db.query(models.Message)
@@ -848,8 +954,8 @@ def brand_applications_page(request: Request, db: Session = Depends(get_db)):
     )
 
 
-@app.post("/ui/applications/{application_id}/select")
-def ui_select_application(application_id: int, request: Request, db: Session = Depends(get_db)):
+@app.post("/ui/applications/{application_id}/approve")
+def ui_approve_application(application_id: int, request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
@@ -865,14 +971,11 @@ def ui_select_application(application_id: int, request: Request, db: Session = D
     if not application:
         return RedirectResponse(url="/brand/applications?error=Application not found.", status_code=303)
 
-    db.query(models.JobApplication).filter(
-        models.JobApplication.job_id == application.job_id
-    ).update({"is_selected": False})
     application.is_selected = True
     application.updated_at = datetime.utcnow()
     db.commit()
     return RedirectResponse(
-        url=f"/chat-demo?user_id={application.advertiser_user_id}&success=Applicant selected.",
+        url=f"/chat-demo?user_id={application.advertiser_user_id}&success=Applicant approved.",
         status_code=303,
     )
 

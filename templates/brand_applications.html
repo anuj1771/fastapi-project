@@ -47,12 +47,15 @@
                   </div>
                   <div class="flex items-center gap-2">
                     {% if application.is_selected %}
-                      <span class="text-xs font-semibold px-2 py-1 rounded-full bg-green-100 text-green-700">Selected</span>
+                      <span class="text-xs font-semibold px-2 py-1 rounded-full bg-green-100 text-green-700">Approved</span>
                     {% endif %}
-                    <form action="/ui/applications/{{ application.id }}/select" method="post">
-                      <button class="text-sm bg-indigo-600 text-white px-3 py-1 rounded">Select</button>
-                    </form>
-                    <a href="/chat-demo?user_id={{ advertiser.id }}" class="text-sm bg-emerald-600 text-white px-3 py-1 rounded">Chat</a>
+                    {% if application.is_selected %}
+                      <a href="/chat-demo?user_id={{ advertiser.id }}" class="text-sm bg-emerald-600 text-white px-3 py-1 rounded">Chat</a>
+                    {% else %}
+                      <form action="/ui/applications/{{ application.id }}/approve" method="post">
+                        <button class="text-sm bg-indigo-600 text-white px-3 py-1 rounded">Approve</button>
+                      </form>
+                    {% endif %}
                   </div>
                 </div>
                 <p class="mt-2 text-sm text-gray-700">{{ application.description }}</p>
