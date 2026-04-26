@@ -160,6 +160,16 @@
         </aside>
 
         <section class="chat">
+            {% if success %}
+                <div style="padding: 10px 16px; background: #ecfdf5; color: #047857; font-size: 13px; border-bottom: 1px solid #d1fae5;">
+                    {{ success }}
+                </div>
+            {% endif %}
+            {% if error %}
+                <div style="padding: 10px 16px; background: #fef2f2; color: #b91c1c; font-size: 13px; border-bottom: 1px solid #fecaca;">
+                    {{ error }}
+                </div>
+            {% endif %}
             <div class="chat-header">
                 <div id="chatTitle">Select a user to start chat</div>
                 <div id="socketStatus" class="status offline">Disconnected</div>
@@ -183,6 +193,7 @@
         const messages = document.getElementById("messages");
         const messageInput = document.getElementById("messageInput");
         const sendBtn = document.getElementById("sendBtn");
+        const initialPartnerId = Number("{{ initial_partner_id or '' }}");
 
         let socket = null;
         let users = [];
@@ -254,6 +265,12 @@
             }
             users = await res.json();
             renderContacts();
+            if (Number.isInteger(initialPartnerId) && initialPartnerId > 0) {
+                const userExists = users.some((u) => u.id === initialPartnerId);
+                if (userExists) {
+                    await selectPartner(initialPartnerId);
+                }
+            }
         }
 
         async function fetchHistory(partnerId) {

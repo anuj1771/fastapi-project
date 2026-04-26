@@ -30,6 +30,16 @@
     <h1 class="text-2xl font-bold mt-2">Dashboard</h1>
 
     {% if user %}
+      {% if success %}
+        <div class="mt-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">
+          {{ success }}
+        </div>
+      {% endif %}
+      {% if error %}
+        <div class="mt-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">
+          {{ error }}
+        </div>
+      {% endif %}
       <div class="mt-4 bg-white shadow rounded-xl p-6 space-y-2">
         <p><span class="font-semibold">Email:</span> {{ user.email }}</p>
         <p><span class="font-semibold">Role:</span> {{ user.role.value }}</p>
@@ -37,8 +47,25 @@
           <p><span class="font-semibold">Profile Type:</span> {{ profile.profile_type.value }}</p>
           <p><span class="font-semibold">Status:</span> {{ profile.status.value }}</p>
         {% else %}
-          <p class="text-amber-700">No profile created yet. Use API endpoints to create one.</p>
+          <p class="text-amber-700">No API profile created yet. You can still use basic profile sections.</p>
         {% endif %}
+      </div>
+
+      <div class="mt-6 bg-white shadow rounded-xl p-6">
+        <h2 class="text-lg font-semibold mb-3">Actions</h2>
+        <div class="flex flex-wrap gap-3">
+          {% if brand_complete %}
+            <a href="/jobs/create" class="inline-block bg-indigo-600 text-white px-4 py-2 rounded text-sm">Create a Job</a>
+            <a href="/brand/applications" class="inline-block bg-slate-700 text-white px-4 py-2 rounded text-sm">See Applicants</a>
+          {% endif %}
+          {% if advertiser_complete %}
+            <a href="/jobs" class="inline-block bg-emerald-600 text-white px-4 py-2 rounded text-sm">See Jobs</a>
+          {% endif %}
+          {% if not brand_complete and not advertiser_complete %}
+            <a href="/profile" class="inline-block bg-amber-500 text-white px-4 py-2 rounded text-sm">Complete Profile First</a>
+          {% endif %}
+        </div>
+        <p class="text-xs text-gray-500 mt-3">Create Job is shown only after Brand profile completion, and See Jobs is shown only after Advertiser profile completion.</p>
       </div>
 
       <div class="mt-6 bg-white shadow rounded-xl p-6">

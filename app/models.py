@@ -106,3 +106,39 @@ class BasicProfile(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     user = relationship("User", back_populates="basic_profiles")
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    brand_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String(150), nullable=False)
+    promotion_requirement = Column(Text, nullable=False)
+    budget = Column(String(80), nullable=False)
+    target_instagram_profiles = Column(Text, nullable=False)
+    promotion_tags = Column(String(255), nullable=False)
+    profile_image_url = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    brand_user = relationship("User")
+    applications = relationship("JobApplication", back_populates="job", cascade="all, delete-orphan")
+
+
+class JobApplication(Base):
+    __tablename__ = "job_applications"
+    __table_args__ = (
+        UniqueConstraint("job_id", "advertiser_user_id", name="uq_job_advertiser_application"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    advertiser_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    description = Column(Text, nullable=False)
+    is_selected = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    job = relationship("Job", back_populates="applications")
+    advertiser_user = relationship("User")

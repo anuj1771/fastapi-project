@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create Job - BrandBridge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <main class="max-w-4xl mx-auto px-6 py-10">
+    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
+      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
+        <form action="/ui/logout" method="post">
+          <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between mb-4">
+      <h1 class="text-2xl font-bold">Create a Job</h1>
+      <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
+    </div>
+
+    {% if success %}
+      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
+    {% endif %}
+    {% if error %}
+      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
+    {% endif %}
+
+    <section class="bg-white rounded-xl shadow p-6">
+      <form action="/ui/jobs/create" method="post" class="space-y-4">
+        <input class="w-full border rounded p-2" name="title" type="text" placeholder="Campaign title (e.g. Summer Collection Push)" required />
+        <textarea class="w-full border rounded p-2 min-h-24" name="promotion_requirement" placeholder="What promotion do you want? Include deliverables and campaign goal." required></textarea>
+        <input class="w-full border rounded p-2" name="budget" type="text" placeholder="Budget (e.g. INR 20,000 - 30,000)" required />
+        <textarea class="w-full border rounded p-2 min-h-24" name="target_instagram_profiles" placeholder="What kind of Instagram profiles do you want (niche, followers range, location, audience)?" required></textarea>
+        <input class="w-full border rounded p-2" name="promotion_tags" type="text" placeholder="Tags: story promotion, reel, image post, collaboration" required />
+        <input class="w-full border rounded p-2" name="profile_image_url" type="url" placeholder="Optional brand profile image URL" />
+        <button class="w-full bg-indigo-600 text-white py-2 rounded">Post Job</button>
+      </form>
+      <p class="text-xs text-gray-500 mt-3">Use clear tags like story promotion, reel, image post, collaboration so advertisers can quickly match.</p>
+    </section>
+  </main>
+</body>
+</html>

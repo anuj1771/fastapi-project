@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Applicants - BrandBridge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <main class="max-w-6xl mx-auto px-6 py-10">
+    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
+      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
+        <form action="/ui/logout" method="post">
+          <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between mb-4">
+      <h1 class="text-2xl font-bold">Job Applicants</h1>
+      <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
+    </div>
+
+    {% if success %}
+      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
+    {% endif %}
+    {% if error %}
+      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
+    {% endif %}
+
+    <div class="space-y-5">
+      {% for card in job_cards %}
+        <section class="bg-white rounded-xl shadow p-6">
+          <h2 class="text-lg font-semibold">{{ card.job.title }}</h2>
+          <p class="text-sm text-gray-600 mt-1">{{ card.job.promotion_requirement }}</p>
+          <p class="text-xs text-gray-500 mt-1">Tags: {{ card.job.promotion_tags }} | Budget: {{ card.job.budget }}</p>
+
+          <div class="mt-4 space-y-3">
+            {% for application, advertiser in card.applications %}
+              <div class="border rounded p-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <p class="font-medium">{{ advertiser.email }}</p>
+                    <p class="text-xs text-gray-500">Applied on {{ application.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    {% if application.is_selected %}
+                      <span class="text-xs font-semibold px-2 py-1 rounded-full bg-green-100 text-green-700">Selected</span>
+                    {% endif %}
+                    <form action="/ui/applications/{{ application.id }}/select" method="post">
+                      <button class="text-sm bg-indigo-600 text-white px-3 py-1 rounded">Select</button>
+                    </form>
+                    <a href="/chat-demo?user_id={{ advertiser.id }}" class="text-sm bg-emerald-600 text-white px-3 py-1 rounded">Chat</a>
+                  </div>
+                </div>
+                <p class="mt-2 text-sm text-gray-700">{{ application.description }}</p>
+              </div>
+            {% else %}
+              <p class="text-sm text-gray-500">No applications yet for this job.</p>
+            {% endfor %}
+          </div>
+        </section>
+      {% else %}
+        <div class="bg-white rounded-xl shadow p-6 text-gray-600">You have not posted any jobs yet.</div>
+      {% endfor %}
+    </div>
+  </main>
+</body>
+</html>

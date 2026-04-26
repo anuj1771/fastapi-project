@@ -91,6 +91,25 @@ def _is_basic_profile_complete(profile: models.BasicProfile | None) -> bool:
     return bool(profile.name and profile.name.strip() and profile.phone_number and profile.phone_number.strip())
 
 
+def _require_completed_basic_profile(
+    db: Session, user_id: int, profile_type: models.ProfileType
+) -> models.BasicProfile:
+    profile = (
+        db.query(models.BasicProfile)
+        .filter(
+            models.BasicProfile.user_id == user_id,
+            models.BasicProfile.profile_type == profile_type,
+        )
+        .first()
+    )
+    if not _is_basic_profile_complete(profile):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"{profile_type.value.title()} profile must be completed first",
+        )
+    return profile
+
+
 def _get_approved_profile(db: Session, user_id: int) -> models.Profile:
     profile = db.query(models.Profile).filter(models.Profile.user_id == user_id).first()
     if not profile or profile.status != models.ProfileStatus.APPROVED:
@@ -618,8 +637,15 @@ def ui_profile_save(
 def dashboard(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
     profile = None
+    advertiser_complete = False
+    brand_complete = False
     if user:
         profile = db.query(models.Profile).filter(models.Profile.user_id == user.id).first()
+        profile_map = _get_basic_profile_map(db, user.id)
+        advertiser_complete = _is_basic_profile_complete(
+            profile_map.get(models.ProfileType.ADVERTISER.value)
+        )
+        brand_complete = _is_basic_profile_complete(profile_map.get(models.ProfileType.BRAND.value))
     display_name = user.email.split("@")[0] if user else None
     return templates.TemplateResponse(
         request,
@@ -630,7 +656,224 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "profile": profile,
             "templates": TEMPLATES,
             "display_name": display_name,
+            "advertiser_complete": advertiser_complete,
+            "brand_complete": brand_complete,
+            "success": request.query_params.get("success"),
+            "error": request.query_params.get("error"),
         },
+    )
+
+
+@app.get("/jobs/create", response_class=HTMLResponse)
+def create_job_page(request: Request, db: Session = Depends(get_db)):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    try:
+        _require_completed_basic_profile(db, user.id, models.ProfileType.BRAND)
+    except HTTPException:
+        return RedirectResponse(
+            url="/dashboard?error=Complete your brand profile to create jobs.", status_code=303
+        )
+    return templates.TemplateResponse(
+        request,
+        "job_create.html",
+        {
+            "request": request,
+            "user": user,
+            "display_name": user.email.split("@")[0],
+            "success": request.query_params.get("success"),
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@app.post("/ui/jobs/create")
+def ui_create_job(
+    request: Request,
+    title: str = Form(...),
+    promotion_requirement: str = Form(...),
+    budget: str = Form(...),
+    target_instagram_profiles: str = Form(...),
+    promotion_tags: str = Form(...),
+    profile_image_url: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    try:
+        _require_completed_basic_profile(db, user.id, models.ProfileType.BRAND)
+        payload = schemas.JobCreate(
+            title=title,
+            promotion_requirement=promotion_requirement,
+            budget=budget,
+            target_instagram_profiles=target_instagram_profiles,
+            promotion_tags=promotion_tags,
+            profile_image_url=profile_image_url or None,
+        )
+    except ValidationError as exc:
+        first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid job input."
+        return RedirectResponse(url=f"/jobs/create?error={first_error}", status_code=303)
+    except HTTPException:
+        return RedirectResponse(
+            url="/dashboard?error=Complete your brand profile to create jobs.", status_code=303
+        )
+
+    job = models.Job(
+        brand_user_id=user.id,
+        title=payload.title.strip(),
+        promotion_requirement=payload.promotion_requirement.strip(),
+        budget=payload.budget.strip(),
+        target_instagram_profiles=payload.target_instagram_profiles.strip(),
+        promotion_tags=payload.promotion_tags.strip(),
+        profile_image_url=(payload.profile_image_url.strip() if payload.profile_image_url else None),
+    )
+    db.add(job)
+    db.commit()
+    return RedirectResponse(url="/jobs/create?success=Job posted successfully.", status_code=303)
+
+
+@app.get("/jobs", response_class=HTMLResponse)
+def jobs_page(request: Request, db: Session = Depends(get_db)):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    try:
+        _require_completed_basic_profile(db, user.id, models.ProfileType.ADVERTISER)
+    except HTTPException:
+        return RedirectResponse(
+            url="/dashboard?error=Complete your advertiser profile to see jobs.", status_code=303
+        )
+
+    jobs = db.query(models.Job).order_by(models.Job.created_at.desc()).all()
+    my_applications = (
+        db.query(models.JobApplication).filter(models.JobApplication.advertiser_user_id == user.id).all()
+    )
+    applied_map = {item.job_id: item for item in my_applications}
+    return templates.TemplateResponse(
+        request,
+        "jobs_list.html",
+        {
+            "request": request,
+            "user": user,
+            "display_name": user.email.split("@")[0],
+            "jobs": jobs,
+            "applied_map": applied_map,
+            "success": request.query_params.get("success"),
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@app.post("/ui/jobs/{job_id}/apply")
+def ui_apply_job(
+    job_id: int,
+    request: Request,
+    description: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    job = db.query(models.Job).filter(models.Job.id == job_id).first()
+    if not job:
+        return RedirectResponse(url="/jobs?error=Job not found.", status_code=303)
+    try:
+        _require_completed_basic_profile(db, user.id, models.ProfileType.ADVERTISER)
+        payload = schemas.JobApplicationCreate(description=description)
+    except ValidationError as exc:
+        first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid application."
+        return RedirectResponse(url=f"/jobs?error={first_error}", status_code=303)
+    except HTTPException:
+        return RedirectResponse(
+            url="/dashboard?error=Complete your advertiser profile to apply jobs.", status_code=303
+        )
+
+    application = models.JobApplication(
+        job_id=job.id,
+        advertiser_user_id=user.id,
+        description=payload.description.strip(),
+    )
+    db.add(application)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return RedirectResponse(url="/jobs?error=You already applied to this job.", status_code=303)
+    return RedirectResponse(url="/jobs?success=Applied successfully.", status_code=303)
+
+
+@app.get("/brand/applications", response_class=HTMLResponse)
+def brand_applications_page(request: Request, db: Session = Depends(get_db)):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    try:
+        _require_completed_basic_profile(db, user.id, models.ProfileType.BRAND)
+    except HTTPException:
+        return RedirectResponse(
+            url="/dashboard?error=Complete your brand profile to review applicants.", status_code=303
+        )
+
+    jobs = (
+        db.query(models.Job)
+        .filter(models.Job.brand_user_id == user.id)
+        .order_by(models.Job.created_at.desc())
+        .all()
+    )
+
+    job_cards = []
+    for job in jobs:
+        applications = (
+            db.query(models.JobApplication, models.User)
+            .join(models.User, models.User.id == models.JobApplication.advertiser_user_id)
+            .filter(models.JobApplication.job_id == job.id)
+            .order_by(models.JobApplication.created_at.desc())
+            .all()
+        )
+        job_cards.append({"job": job, "applications": applications})
+
+    return templates.TemplateResponse(
+        request,
+        "brand_applications.html",
+        {
+            "request": request,
+            "user": user,
+            "display_name": user.email.split("@")[0],
+            "job_cards": job_cards,
+            "success": request.query_params.get("success"),
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@app.post("/ui/applications/{application_id}/select")
+def ui_select_application(application_id: int, request: Request, db: Session = Depends(get_db)):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    application = (
+        db.query(models.JobApplication)
+        .join(models.Job, models.Job.id == models.JobApplication.job_id)
+        .filter(
+            models.JobApplication.id == application_id,
+            models.Job.brand_user_id == user.id,
+        )
+        .first()
+    )
+    if not application:
+        return RedirectResponse(url="/brand/applications?error=Application not found.", status_code=303)
+
+    db.query(models.JobApplication).filter(
+        models.JobApplication.job_id == application.job_id
+    ).update({"is_selected": False})
+    application.is_selected = True
+    application.updated_at = datetime.utcnow()
+    db.commit()
+    return RedirectResponse(
+        url=f"/chat-demo?user_id={application.advertiser_user_id}&success=Applicant selected.",
+        status_code=303,
     )
 
 
@@ -646,5 +889,8 @@ def chat_demo(request: Request, db: Session = Depends(get_db)):
             "request": request,
             "user": user,
             "display_name": user.email.split("@")[0],
+            "initial_partner_id": request.query_params.get("user_id"),
+            "success": request.query_params.get("success"),
+            "error": request.query_params.get("error"),
         },
     )

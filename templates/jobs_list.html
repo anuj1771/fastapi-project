@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jobs - BrandBridge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <main class="max-w-6xl mx-auto px-6 py-10">
+    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
+      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
+        <form action="/ui/logout" method="post">
+          <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between mb-4">
+      <h1 class="text-2xl font-bold">Available Jobs</h1>
+      <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
+    </div>
+    <p class="text-sm text-gray-600 mb-4">Newest jobs are shown first.</p>
+
+    {% if success %}
+      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
+    {% endif %}
+    {% if error %}
+      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
+    {% endif %}
+
+    <div class="space-y-5">
+      {% for job in jobs %}
+        <section class="bg-white rounded-xl shadow p-6">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h2 class="text-xl font-semibold">{{ job.title }}</h2>
+              <p class="text-xs text-gray-500 mt-1">Posted: {{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+            </div>
+            {% if job.profile_image_url %}
+              <img src="{{ job.profile_image_url }}" alt="Brand profile" class="w-12 h-12 rounded-full object-cover border" />
+            {% else %}
+              <div class="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center font-semibold">B</div>
+            {% endif %}
+          </div>
+          <div class="mt-4 grid md:grid-cols-2 gap-4 text-sm">
+            <p><span class="font-semibold">Promotion Need:</span> {{ job.promotion_requirement }}</p>
+            <p><span class="font-semibold">Budget:</span> {{ job.budget }}</p>
+            <p><span class="font-semibold">Target Profiles:</span> {{ job.target_instagram_profiles }}</p>
+            <p><span class="font-semibold">Tags:</span> {{ job.promotion_tags }}</p>
+          </div>
+
+          {% set existing = applied_map.get(job.id) %}
+          {% if existing %}
+            <div class="mt-4 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+              Applied already. Your note: {{ existing.description }}
+            </div>
+          {% else %}
+            <form action="/ui/jobs/{{ job.id }}/apply" method="post" class="mt-4 space-y-2">
+              <textarea class="w-full border rounded p-2 min-h-24" name="description" placeholder="Write why you are a good fit for this job..." required></textarea>
+              <button class="bg-emerald-600 text-white px-4 py-2 rounded text-sm">Apply</button>
+            </form>
+          {% endif %}
+        </section>
+      {% else %}
+        <div class="bg-white rounded-xl shadow p-6 text-gray-600">No jobs posted yet.</div>
+      {% endfor %}
+    </div>
+  </main>
+</body>
+</html>

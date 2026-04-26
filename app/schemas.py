@@ -147,3 +147,45 @@ class BasicProfileOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class JobCreate(BaseModel):
+    title: str = Field(min_length=3, max_length=150)
+    promotion_requirement: str = Field(min_length=5, max_length=2000)
+    budget: str = Field(min_length=1, max_length=80)
+    target_instagram_profiles: str = Field(min_length=5, max_length=2000)
+    promotion_tags: str = Field(min_length=3, max_length=255)
+    profile_image_url: Optional[str] = Field(default=None, max_length=255)
+
+
+class JobOut(BaseModel):
+    id: int
+    brand_user_id: int
+    title: str
+    promotion_requirement: str
+    budget: str
+    target_instagram_profiles: str
+    promotion_tags: str
+    profile_image_url: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class JobApplicationCreate(BaseModel):
+    description: str = Field(min_length=5, max_length=2000)
+
+
+class JobApplicationOut(BaseModel):
+    id: int
+    job_id: int
+    advertiser_user_id: int
+    description: str
+    is_selected: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
