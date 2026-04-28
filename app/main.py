@@ -1,5 +1,9 @@
 from datetime import datetime
+from email.message import EmailMessage
+import logging
+import os
 from pathlib import Path
+import smtplib
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -62,6 +66,48 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+logger = logging.getLogger(__name__)
+
+
+def _build_app_url(path: str) -> str:
+    base_url = os.getenv("APP_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+    return f"{base_url}{path}"
+
+
+def _send_email(to_email: str, subject: str, body: str):
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    smtp_from = os.getenv("SMTP_FROM_EMAIL", "").strip() or smtp_user
+    use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() == "true"
+
+    if not smtp_host or not smtp_from or not smtp_password:
+        raise RuntimeError("SMTP is not configured")
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = smtp_from
+    message["To"] = to_email
+    message.set_content(body)
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+        if use_tls:
+            server.starttls()
+        if smtp_user and smtp_password:
+            server.login(smtp_user, smtp_password)
+        server.send_message(message)
+
+
+def _send_password_reset_email(user_email: str, token: str):
+    reset_link = _build_app_url(f"/reset-password?token={token}")
+    subject = "Reset your BrandBridge password"
+    body = (
+        "We received a request to reset your password.\n\n"
+        f"Click this link to set a new password: {reset_link}\n\n"
+        "This link expires in 30 minutes. If you did not request this, you can ignore this email."
+    )
+    _send_email(user_email, subject, body)
 
 
 def _get_user_from_cookie(request: Request, db: Session) -> models.User | None:
@@ -276,6 +322,33 @@ def login(payload: schemas.UserLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = auth.create_access_token(str(user.id))
     return schemas.Token(access_token=token)
+
+
+@app.post("/forgot-password")
+def forgot_password(payload: schemas.ForgotPasswordRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == payload.email.lower()).first()
+    if user:
+        try:
+            reset_token = auth.create_password_reset_token(user.email)
+            _send_password_reset_email(user.email, reset_token)
+        except Exception:
+            logger.exception("Failed to send password reset email")
+            # Avoid leaking server email configuration details to clients.
+            raise HTTPException(status_code=500, detail="Could not send reset email right now")
+    return {"message": "If an account with this email exists, a reset link has been sent."}
+
+
+@app.post("/reset-password")
+def reset_password(payload: schemas.ResetPasswordRequest, db: Session = Depends(get_db)):
+    email = auth.decode_password_reset_token(payload.token)
+    if not email:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid reset token")
+    user.password_hash = auth.hash_password(payload.new_password)
+    db.commit()
+    return {"message": "Password has been reset successfully"}
 
 
 @app.get("/me", response_model=schemas.UserOut)
@@ -670,6 +743,63 @@ def ui_login(
     response = RedirectResponse(url="/dashboard", status_code=303)
     response.set_cookie("token", token.access_token, httponly=True, path="/")
     return response
+
+
+@app.get("/forgot-password", response_class=HTMLResponse)
+def forgot_password_page(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "forgot_password.html",
+        {
+            "request": request,
+            "error": request.query_params.get("error"),
+            "success": request.query_params.get("success"),
+        },
+    )
+
+
+@app.post("/ui/forgot-password")
+def ui_forgot_password(email: str = Form(...), db: Session = Depends(get_db)):
+    try:
+        forgot_password(schemas.ForgotPasswordRequest(email=email), db)
+    except ValidationError:
+        return RedirectResponse(url="/forgot-password?error=Please enter a valid email.", status_code=303)
+    except HTTPException as exc:
+        return RedirectResponse(url=f"/forgot-password?error={exc.detail}", status_code=303)
+    return RedirectResponse(
+        url="/forgot-password?success=If your email exists, we sent a reset link.",
+        status_code=303,
+    )
+
+
+@app.get("/reset-password", response_class=HTMLResponse)
+def reset_password_page(request: Request, token: str | None = None):
+    if not token:
+        return RedirectResponse(url="/forgot-password?error=Missing reset token.", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "reset_password.html",
+        {
+            "request": request,
+            "token": token,
+            "error": request.query_params.get("error"),
+            "success": request.query_params.get("success"),
+        },
+    )
+
+
+@app.post("/ui/reset-password")
+def ui_reset_password(token: str = Form(...), new_password: str = Form(...), db: Session = Depends(get_db)):
+    try:
+        reset_password(schemas.ResetPasswordRequest(token=token, new_password=new_password), db)
+    except ValidationError:
+        return RedirectResponse(
+            url=f"/reset-password?token={token}&error=Password must be at least 6 characters.",
+            status_code=303,
+        )
+    except HTTPException as exc:
+        return RedirectResponse(url=f"/reset-password?token={token}&error={exc.detail}", status_code=303)
+    return RedirectResponse(url="/?success=Password reset successful. Please login.", status_code=303)
 
 
 def _logout_response() -> RedirectResponse:
