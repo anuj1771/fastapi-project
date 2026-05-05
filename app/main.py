@@ -75,11 +75,11 @@ def _build_app_url(path: str) -> str:
 
 
 def _send_email(to_email: str, subject: str, body: str):
-    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USER", "").strip()
-    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
-    smtp_from = os.getenv("SMTP_FROM_EMAIL", "").strip() or smtp_user
+    smtp_user = os.getenv("SMTP_USER", "anujsharma200217@gmail.com").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "jmjq tlbm khpp bytc").strip()
+    smtp_from = os.getenv("SMTP_FROM_EMAIL", "anujsharma200217@gmail.com").strip() or smtp_user
     use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() == "true"
 
     if not smtp_host or not smtp_from or not smtp_password:
