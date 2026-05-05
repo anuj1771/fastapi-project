@@ -45,6 +45,7 @@ class User(Base):
 
     profile = relationship("Profile", back_populates="user", uselist=False)
     basic_profiles = relationship("BasicProfile", back_populates="user")
+    approval_requests = relationship("ProfileApprovalRequest", back_populates="user")
     sent_messages = relationship(
         "Message", back_populates="sender", foreign_keys="Message.sender_id"
     )
@@ -106,6 +107,40 @@ class BasicProfile(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     user = relationship("User", back_populates="basic_profiles")
+
+
+class ProfileApprovalRequest(Base):
+    __tablename__ = "profile_approval_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "profile_type", name="uq_profile_approval_request_user_type"
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    profile_type = Column(SqlEnum(ProfileType), nullable=False, index=True)
+    status = Column(SqlEnum(ProfileStatus), default=ProfileStatus.PENDING, nullable=False)
+    requested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    reviewed_at = Column(DateTime, nullable=True)
+    rejected_until = Column(DateTime, nullable=True)
+    rejection_reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User", back_populates="approval_requests")
+
+
+class ChatConnection(Base):
+    __tablename__ = "chat_connections"
+    __table_args__ = (
+        UniqueConstraint("user_one_id", "user_two_id", name="uq_chat_connection_pair"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_one_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    user_two_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Job(Base):

@@ -34,6 +34,11 @@ uvicorn app.main:app --reload
 - SQLite is used by default via `brandbridge.db`.
 - Register with an email ending in `@admin.com` to create an admin user.
 - Approved profile is required before chat access.
+- Forgot password email uses SMTP env vars:
+  - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`
+  - `SMTP_FROM_EMAIL` (optional, defaults to `SMTP_USER`)
+  - `SMTP_USE_TLS` (`true`/`false`, default `true`)
+  - `APP_BASE_URL` (default `http://127.0.0.1:8000`)
 
 ## API Summary
 
@@ -41,6 +46,10 @@ uvicorn app.main:app --reload
 
 - `POST /register`
 - `POST /login`
+- `POST /forgot-password`
+- `POST /reset-password`
+- `GET /forgot-password`
+- `GET /reset-password?token=...`
 - `GET /me`
 
 ### Profiles

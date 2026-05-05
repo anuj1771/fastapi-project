@@ -43,23 +43,29 @@
       <div class="mt-4 bg-white shadow rounded-xl p-6 space-y-2">
         <p><span class="font-semibold">Email:</span> {{ user.email }}</p>
         <p><span class="font-semibold">Role:</span> {{ user.role.value }}</p>
-        {% if profile %}
-          <p><span class="font-semibold">Profile Type:</span> {{ profile.profile_type.value }}</p>
-          <p><span class="font-semibold">Status:</span> {{ profile.status.value }}</p>
-        {% else %}
-          <p class="text-amber-700">No API profile created yet. You can still use basic profile sections.</p>
-        {% endif %}
+        <p><span class="font-semibold">Advertiser Request:</span> {{ advertiser_request.status.value if advertiser_request else 'not sent' }}</p>
+        <p><span class="font-semibold">Brand Request:</span> {{ brand_request.status.value if brand_request else 'not sent' }}</p>
       </div>
 
       <div class="mt-6 bg-white shadow rounded-xl p-6">
         <h2 class="text-lg font-semibold mb-3">Actions</h2>
         <div class="flex flex-wrap gap-3">
+          {% if is_admin %}
+            <a href="/admin/approval-requests/advertiser" class="inline-block bg-indigo-600 text-white px-4 py-2 rounded text-sm">Advertiser Approval Requests</a>
+            <a href="/admin/approval-requests/brand" class="inline-block bg-purple-600 text-white px-4 py-2 rounded text-sm">Brand Approval Requests</a>
+          {% endif %}
           {% if brand_complete %}
             <a href="/jobs/create" class="inline-block bg-indigo-600 text-white px-4 py-2 rounded text-sm">Create a Job</a>
             <a href="/brand/applications" class="inline-block bg-slate-700 text-white px-4 py-2 rounded text-sm">See Applicants</a>
           {% endif %}
           {% if advertiser_complete %}
             <a href="/jobs" class="inline-block bg-emerald-600 text-white px-4 py-2 rounded text-sm">See Jobs</a>
+          {% endif %}
+          {% if brand_approved %}
+            <a href="/explore/advertisers" class="inline-block bg-cyan-600 text-white px-4 py-2 rounded text-sm">Explore Advertisers</a>
+          {% endif %}
+          {% if advertiser_approved %}
+            <a href="/explore/brands" class="inline-block bg-fuchsia-600 text-white px-4 py-2 rounded text-sm">Explore Brands</a>
           {% endif %}
           {% if not brand_complete and not advertiser_complete %}
             <a href="/profile" class="inline-block bg-amber-500 text-white px-4 py-2 rounded text-sm">Complete Profile First</a>
