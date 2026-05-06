@@ -34,8 +34,17 @@
       </div>
     {% endif %}
 
-    <div class="grid md:grid-cols-2 gap-6">
-      <section class="bg-white rounded-xl shadow p-6">
+    <div class="mb-4 inline-flex bg-white rounded-lg shadow p-1">
+      <button id="btn-advertiser" type="button" class="px-4 py-2 rounded-md text-sm font-semibold bg-indigo-600 text-white" onclick="showProfile('advertiser')">
+        Advertiser
+      </button>
+      <button id="btn-brand" type="button" class="px-4 py-2 rounded-md text-sm font-semibold text-gray-700" onclick="showProfile('brand')">
+        Brand
+      </button>
+    </div>
+
+    <div>
+      <section id="panel-advertiser" class="bg-white rounded-xl shadow p-6">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-xl font-semibold">Advertiser Profile</h2>
           {% if advertiser_complete %}
@@ -64,7 +73,7 @@
         <p class="text-xs text-gray-500 mt-2">Phone must contain only digits, length 10 to 15.</p>
       </section>
 
-      <section class="bg-white rounded-xl shadow p-6">
+      <section id="panel-brand" class="bg-white rounded-xl shadow p-6 hidden">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-xl font-semibold">Brand Profile</h2>
           {% if brand_complete %}
@@ -94,5 +103,29 @@
       </section>
     </div>
   </main>
+  <script>
+    function showProfile(type) {
+      const advertiserPanel = document.getElementById("panel-advertiser");
+      const brandPanel = document.getElementById("panel-brand");
+      const advertiserBtn = document.getElementById("btn-advertiser");
+      const brandBtn = document.getElementById("btn-brand");
+
+      if (type === "advertiser") {
+        advertiserPanel.classList.remove("hidden");
+        brandPanel.classList.add("hidden");
+        advertiserBtn.classList.add("bg-indigo-600", "text-white");
+        advertiserBtn.classList.remove("text-gray-700");
+        brandBtn.classList.remove("bg-indigo-600", "text-white");
+        brandBtn.classList.add("text-gray-700");
+      } else {
+        brandPanel.classList.remove("hidden");
+        advertiserPanel.classList.add("hidden");
+        brandBtn.classList.add("bg-indigo-600", "text-white");
+        brandBtn.classList.remove("text-gray-700");
+        advertiserBtn.classList.remove("bg-indigo-600", "text-white");
+        advertiserBtn.classList.add("text-gray-700");
+      }
+    }
+  </script>
 </body>
 </html>
