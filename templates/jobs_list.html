@@ -22,7 +22,11 @@
       <h1 class="text-2xl font-bold">Available Jobs</h1>
       <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
     </div>
-    <p class="text-sm text-gray-600 mb-4">Newest jobs are shown first.</p>
+    {% if is_admin %}
+      <p class="text-sm text-gray-600 mb-4">Admin view: all jobs are visible in full history.</p>
+    {% else %}
+      <p class="text-sm text-gray-600 mb-4">Newest jobs are shown first. Advertisers can view and apply only for jobs posted in last {{ advertiser_visibility_days }} days.</p>
+    {% endif %}
 
     {% if success %}
       <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
@@ -52,16 +56,22 @@
             <p><span class="font-semibold">Tags:</span> {{ job.promotion_tags }}</p>
           </div>
 
-          {% set existing = applied_map.get(job.id) %}
-          {% if existing %}
-            <div class="mt-4 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">
-              Applied already. Your note: {{ existing.description }}
+          {% if is_admin %}
+            <div class="mt-4 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700">
+              Admin monitoring mode: applications are disabled on this page.
             </div>
           {% else %}
-            <form action="/ui/jobs/{{ job.id }}/apply" method="post" class="mt-4 space-y-2">
-              <textarea class="w-full border rounded p-2 min-h-24" name="description" placeholder="Write why you are a good fit for this job..." required></textarea>
-              <button class="bg-emerald-600 text-white px-4 py-2 rounded text-sm">Apply</button>
-            </form>
+            {% set existing = applied_map.get(job.id) %}
+            {% if existing %}
+              <div class="mt-4 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+                Applied already. Your note: {{ existing.description }}
+              </div>
+            {% else %}
+              <form action="/ui/jobs/{{ job.id }}/apply" method="post" class="mt-4 space-y-2">
+                <textarea class="w-full border rounded p-2 min-h-24" name="description" placeholder="Write why you are a good fit for this job..." required></textarea>
+                <button class="bg-emerald-600 text-white px-4 py-2 rounded text-sm">Apply</button>
+              </form>
+            {% endif %}
           {% endif %}
         </section>
       {% else %}

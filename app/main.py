@@ -31,6 +31,7 @@ TEMPLATES = [
     "Thanks for reaching out. Let's discuss campaign details.",
     "Can we schedule a short call to discuss partnership?",
 ]
+ADVERTISER_JOB_VISIBILITY_DAYS = 2
 
 
 class ConnectionManager:
@@ -1354,18 +1355,31 @@ def jobs_page(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
-    try:
-        _require_completed_basic_profile(db, user.id, models.ProfileType.ADVERTISER)
-    except HTTPException:
-        return RedirectResponse(
-            url="/dashboard?error=Complete your advertiser profile to see jobs.", status_code=303
-        )
+    is_admin = user.role == models.UserRole.ADMIN
+    if not is_admin:
+        try:
+            _require_completed_basic_profile(db, user.id, models.ProfileType.ADVERTISER)
+        except HTTPException:
+            return RedirectResponse(
+                url="/dashboard?error=Complete your advertiser profile to see jobs.", status_code=303
+            )
 
-    jobs = db.query(models.Job).order_by(models.Job.created_at.desc()).all()
-    my_applications = (
-        db.query(models.JobApplication).filter(models.JobApplication.advertiser_user_id == user.id).all()
-    )
-    applied_map = {item.job_id: item for item in my_applications}
+    if is_admin:
+        jobs = db.query(models.Job).order_by(models.Job.created_at.desc()).all()
+        applied_map = {}
+    else:
+        visible_after = datetime.utcnow() - timedelta(days=ADVERTISER_JOB_VISIBILITY_DAYS)
+        jobs = (
+            db.query(models.Job)
+            .filter(models.Job.created_at >= visible_after)
+            .order_by(models.Job.created_at.desc())
+            .all()
+        )
+        my_applications = (
+            db.query(models.JobApplication).filter(models.JobApplication.advertiser_user_id == user.id).all()
+        )
+        applied_map = {item.job_id: item for item in my_applications}
+
     return templates.TemplateResponse(
         request,
         "jobs_list.html",
@@ -1375,6 +1389,8 @@ def jobs_page(request: Request, db: Session = Depends(get_db)):
             "display_name": user.email.split("@")[0],
             "jobs": jobs,
             "applied_map": applied_map,
+            "is_admin": is_admin,
+            "advertiser_visibility_days": ADVERTISER_JOB_VISIBILITY_DAYS,
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
@@ -1391,9 +1407,16 @@ def ui_apply_job(
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    if user.role == models.UserRole.ADMIN:
+        return RedirectResponse(url="/jobs?error=Admin cannot apply to jobs.", status_code=303)
     job = db.query(models.Job).filter(models.Job.id == job_id).first()
     if not job:
         return RedirectResponse(url="/jobs?error=Job not found.", status_code=303)
+    if job.created_at < (datetime.utcnow() - timedelta(days=ADVERTISER_JOB_VISIBILITY_DAYS)):
+        return RedirectResponse(
+            url="/jobs?error=This job is older than 2 days and is no longer open for advertiser applications.",
+            status_code=303,
+        )
     try:
         _require_completed_basic_profile(db, user.id, models.ProfileType.ADVERTISER)
         payload = schemas.JobApplicationCreate(description=description)
