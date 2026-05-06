@@ -23,6 +23,25 @@
             align-items: center;
         }
         .topbar a { color: #2463eb; text-decoration: none; }
+        .coin-pill {
+            background: #fef3c7;
+            color: #92400e;
+            font-weight: 600;
+            font-size: 13px;
+            padding: 4px 10px;
+            border-radius: 999px;
+        }
+        .coin-actions form { display: inline; }
+        .coin-actions button {
+            border: 0;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
+            background: #f59e0b;
+            color: #ffffff;
+            cursor: pointer;
+            margin-right: 6px;
+        }
         .layout {
             display: grid;
             grid-template-columns: 320px 1fr;
@@ -146,7 +165,26 @@
 <body>
     <div class="topbar">
         <strong>BrandBridge Chat</strong>
-        <a href="/dashboard">Back to dashboard</a>
+        <div>
+            {% if user.role.value != 'admin' %}
+                <span class="coin-pill">🪙 {{ user.coins }}</span>
+                <span class="coin-actions">
+                    <form action="/ui/coins/earn" method="post">
+                        <input type="hidden" name="next_path" value="{{ request.url.path }}" />
+                        <button name="amount" value="20">+20</button>
+                    </form>
+                    <form action="/ui/coins/earn" method="post">
+                        <input type="hidden" name="next_path" value="{{ request.url.path }}" />
+                        <button name="amount" value="40">+40</button>
+                    </form>
+                    <form action="/ui/coins/earn" method="post">
+                        <input type="hidden" name="next_path" value="{{ request.url.path }}" />
+                        <button name="amount" value="70">+70</button>
+                    </form>
+                </span>
+            {% endif %}
+            <a href="/dashboard">Back to dashboard</a>
+        </div>
     </div>
     <div class="layout">
         <aside class="sidebar">

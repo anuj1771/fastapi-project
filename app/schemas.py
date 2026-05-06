@@ -34,6 +34,7 @@ class UserOut(BaseModel):
     id: int
     email: EmailStr
     role: UserRole
+    coins: int
     created_at: datetime
 
     class Config:

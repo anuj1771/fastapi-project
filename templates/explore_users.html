@@ -11,6 +11,20 @@
     <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
       <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
       <div class="flex items-center gap-3">
+        {% if user.role.value != 'admin' %}
+          <span class="text-sm font-semibold text-amber-700">🪙 {{ user.coins }}</span>
+          <details class="relative">
+            <summary class="list-none cursor-pointer text-sm bg-amber-500 text-white px-3 py-1 rounded">Get more coins</summary>
+            <div class="absolute right-0 mt-2 w-56 bg-white border rounded shadow p-3 z-10">
+              <form action="/ui/coins/earn" method="post" class="space-y-2">
+                <input type="hidden" name="next_path" value="{{ request.url.path }}" />
+                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="20">Get 20 coins</button>
+                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="40">Get 40 coins</button>
+                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="70">Get 70 coins</button>
+              </form>
+            </div>
+          </details>
+        {% endif %}
         <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
         <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
       </div>

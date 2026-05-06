@@ -12,6 +12,20 @@
       <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
       {% if user %}
         <div class="flex items-center gap-3">
+          {% if not is_admin %}
+            <span class="text-sm font-semibold text-amber-700">🪙 {{ user.coins }}</span>
+            <details class="relative">
+              <summary class="list-none cursor-pointer text-sm bg-amber-500 text-white px-3 py-1 rounded">Get more coins</summary>
+              <div class="absolute right-0 mt-2 w-56 bg-white border rounded shadow p-3 z-10">
+                <form action="/ui/coins/earn" method="post" class="space-y-2">
+                  <input type="hidden" name="next_path" value="{{ request.url.path }}" />
+                  <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="20">Get 20 coins</button>
+                  <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="40">Get 40 coins</button>
+                  <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="70">Get 70 coins</button>
+                </form>
+              </div>
+            </details>
+          {% endif %}
           <a href="/profile" title="Profile" class="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center text-sm font-semibold">P</a>
           <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
           <form action="/ui/logout" method="post">
@@ -73,6 +87,22 @@
         </div>
         <p class="text-xs text-gray-500 mt-3">Create Job is shown only after Brand profile completion, and See Jobs is shown only after Advertiser profile completion.</p>
       </div>
+
+      {% if is_admin %}
+        <div class="mt-6 bg-white shadow rounded-xl p-6">
+          <h2 class="text-lg font-semibold mb-3">Admin: Add Coins to Users</h2>
+          <form action="/ui/admin/coins/add" method="post" class="grid md:grid-cols-3 gap-3">
+            <select class="border rounded p-2" name="target_user_id" required>
+              <option value="">Select user</option>
+              {% for non_admin in non_admin_users %}
+                <option value="{{ non_admin.id }}">{{ non_admin.email }} (current: {{ non_admin.coins }} coins)</option>
+              {% endfor %}
+            </select>
+            <input class="border rounded p-2" name="amount" type="number" min="1" placeholder="Coins to add" required />
+            <button class="bg-indigo-600 text-white px-4 py-2 rounded text-sm">Add Coins</button>
+          </form>
+        </div>
+      {% endif %}
 
       <div class="mt-6 bg-white shadow rounded-xl p-6">
         <h2 class="text-lg font-semibold mb-3">Static Message Templates</h2>

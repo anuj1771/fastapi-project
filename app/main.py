@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,6 +32,18 @@ TEMPLATES = [
     "Can we schedule a short call to discuss partnership?",
 ]
 ADVERTISER_JOB_VISIBILITY_DAYS = 2
+COIN_TOP_UP_OPTIONS = {20, 40, 70}
+
+
+def _ensure_runtime_schema():
+    inspector = inspect(engine)
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "coins" not in user_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN coins INTEGER NOT NULL DEFAULT 0"))
+
+
+_ensure_runtime_schema()
 
 
 class ConnectionManager:
@@ -866,6 +878,56 @@ def ui_logout_get():
     return _logout_response()
 
 
+@app.post("/ui/coins/earn")
+def ui_earn_coins(
+    request: Request,
+    amount: int = Form(...),
+    next_path: str = Form("/dashboard"),
+    db: Session = Depends(get_db),
+):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    if user.role == models.UserRole.ADMIN:
+        return RedirectResponse(url="/dashboard?error=Admin users cannot claim coins.", status_code=303)
+    if amount not in COIN_TOP_UP_OPTIONS:
+        return RedirectResponse(url="/dashboard?error=Invalid coin amount selected.", status_code=303)
+    user.coins = (user.coins or 0) + amount
+    db.commit()
+    redirect_to = next_path if next_path.startswith("/") else "/dashboard"
+    return RedirectResponse(
+        url=f"{redirect_to}?success=Added+{amount}+coins+to+your+wallet.",
+        status_code=303,
+    )
+
+
+@app.post("/ui/admin/coins/add")
+def ui_admin_add_coins(
+    request: Request,
+    target_user_id: int = Form(...),
+    amount: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    if amount <= 0:
+        return RedirectResponse(url="/dashboard?error=Coins amount must be greater than zero.", status_code=303)
+    target_user = (
+        db.query(models.User)
+        .filter(models.User.id == target_user_id, models.User.role != models.UserRole.ADMIN)
+        .first()
+    )
+    if not target_user:
+        return RedirectResponse(url="/dashboard?error=Target user not found.", status_code=303)
+    target_user.coins = (target_user.coins or 0) + amount
+    db.commit()
+    return RedirectResponse(
+        url=f"/dashboard?success=Added+{amount}+coins+to+{target_user.email}.",
+        status_code=303,
+    )
+
+
 @app.get("/profile", response_class=HTMLResponse)
 def profile_page(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
@@ -992,6 +1054,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     brand_request = None
     advertiser_approved = False
     brand_approved = False
+    non_admin_users = []
     if user:
         profile_map = _get_basic_profile_map(db, user.id)
         approval_map = {
@@ -1010,6 +1073,13 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             advertiser_request and advertiser_request.status == models.ProfileStatus.APPROVED
         )
         brand_approved = bool(brand_request and brand_request.status == models.ProfileStatus.APPROVED)
+        if user.role == models.UserRole.ADMIN:
+            non_admin_users = (
+                db.query(models.User)
+                .filter(models.User.role != models.UserRole.ADMIN)
+                .order_by(models.User.email.asc())
+                .all()
+            )
     display_name = user.email.split("@")[0] if user else None
     return templates.TemplateResponse(
         request,
@@ -1026,6 +1096,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "advertiser_approved": advertiser_approved,
             "brand_approved": brand_approved,
             "is_admin": bool(user and user.role == models.UserRole.ADMIN),
+            "non_admin_users": non_admin_users,
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
