@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin - Coin Cost Settings</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <main class="max-w-5xl mx-auto px-6 py-10">
+    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
+      <span class="text-sm text-gray-700 font-medium">BrandBridge Admin</span>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
+        <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
+        <form action="/ui/logout" method="post">
+          <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
+        </form>
+      </div>
+    </div>
+
+    <h1 class="text-2xl font-bold mb-2">Coin Cost Settings</h1>
+    <p class="text-sm text-gray-600 mb-4">Update coin costs and enable/disable charging for each action. Changes apply immediately.</p>
+
+    {% if success %}
+      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
+    {% endif %}
+    {% if error %}
+      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
+    {% endif %}
+
+    <form action="/ui/admin/coin-costs/save" method="post" class="bg-white rounded-xl shadow p-6">
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-600 border-b">
+              <th class="py-2 pr-4">Key</th>
+              <th class="py-2 pr-4">Enabled</th>
+              <th class="py-2 pr-4">Cost</th>
+              <th class="py-2 pr-4">Description</th>
+              <th class="py-2">Last Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in settings %}
+              <tr class="border-b">
+                <td class="py-3 pr-4 font-mono text-xs">{{ row.key }}</td>
+                <td class="py-3 pr-4">
+                  <input type="checkbox" name="enabled__{{ row.key }}" {% if row.enabled %}checked{% endif %} />
+                </td>
+                <td class="py-3 pr-4">
+                  <input class="border rounded p-2 w-28" type="number" min="0" name="cost__{{ row.key }}" value="{{ row.cost }}" />
+                </td>
+                <td class="py-3 pr-4">
+                  <input class="border rounded p-2 w-full min-w-64" type="text" name="description__{{ row.key }}" value="{{ row.description or '' }}" />
+                </td>
+                <td class="py-3 text-gray-500">
+                  {{ row.updated_at.strftime('%Y-%m-%d %H:%M') if row.updated_at else '-' }}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mt-5 flex items-center justify-end gap-3">
+        <a href="/admin/coin-costs" class="text-sm text-gray-600">Reset</a>
+        <button class="bg-indigo-600 text-white px-4 py-2 rounded text-sm" type="submit">Save changes</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>
+

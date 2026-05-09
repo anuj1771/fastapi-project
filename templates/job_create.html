@@ -45,7 +45,7 @@
     {% endif %}
 
     <section class="bg-white rounded-xl shadow p-6">
-      <form action="/ui/jobs/create" method="post" class="space-y-4">
+      <form action="/ui/jobs/create" method="post" class="space-y-4 js-paid-action" data-cost="{{ coin_costs.create_job_cost or 0 }}" data-action-label="Create Job">
         <input class="w-full border rounded p-2" name="title" type="text" placeholder="Campaign title (e.g. Summer Collection Push)" required />
         <textarea class="w-full border rounded p-2 min-h-24" name="promotion_requirement" placeholder="What promotion do you want? Include deliverables and campaign goal." required></textarea>
         <input class="w-full border rounded p-2" name="budget" type="text" placeholder="Budget (e.g. INR 20,000 - 30,000)" required />
@@ -57,5 +57,58 @@
       <p class="text-xs text-gray-500 mt-3">Use clear tags like story promotion, reel, image post, collaboration so advertisers can quickly match.</p>
     </section>
   </main>
+  <div id="coinModal" class="fixed inset-0 hidden items-center justify-center bg-slate-900/50 px-4">
+    <div class="w-full max-w-md rounded-xl bg-white shadow-xl border border-slate-200">
+      <div class="px-6 pt-6 pb-3 text-center">
+        <h3 id="coinModalTitle" class="text-lg font-semibold text-slate-900">Popup title</h3>
+        <p id="coinModalText" class="mt-2 text-sm text-slate-600">This action will cost coins.</p>
+      </div>
+      <div class="px-6 pb-6 flex gap-3 justify-center">
+        <button id="coinModalCancel" type="button" class="w-32 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Close</button>
+        <button id="coinModalOk" type="button" class="w-32 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">Ok</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const coinModal = document.getElementById("coinModal");
+    const coinModalTitle = document.getElementById("coinModalTitle");
+    const coinModalText = document.getElementById("coinModalText");
+    const coinModalCancel = document.getElementById("coinModalCancel");
+    const coinModalOk = document.getElementById("coinModalOk");
+
+    function openCoinModal({ title, text, onOk }) {
+      coinModalTitle.textContent = title || "Confirm";
+      coinModalText.textContent = text || "";
+      coinModal.classList.remove("hidden");
+      coinModal.classList.add("flex");
+
+      const cleanup = () => {
+        coinModal.classList.add("hidden");
+        coinModal.classList.remove("flex");
+        coinModalOk.onclick = null;
+        coinModalCancel.onclick = null;
+      };
+
+      coinModalCancel.onclick = () => cleanup();
+      coinModalOk.onclick = () => {
+        cleanup();
+        onOk && onOk();
+      };
+    }
+
+    document.querySelectorAll(".js-paid-action").forEach((form) => {
+      form.addEventListener("submit", (e) => {
+        const cost = Number(form.dataset.cost || "0");
+        if (!Number.isFinite(cost) || cost <= 0) return;
+        e.preventDefault();
+        const label = form.dataset.actionLabel || "This action";
+        openCoinModal({
+          title: "Popup title",
+          text: `${label} will cost ${cost} coins. Do you want to continue?`,
+          onOk: () => form.submit(),
+        });
+      });
+    });
+  </script>
 </body>
 </html>
