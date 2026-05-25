@@ -4,47 +4,24 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Create Job - AffeeSo</title>
-  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-100 min-h-screen">
-  <main class="max-w-4xl mx-auto px-6 py-10">
-    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
-      <span class="text-sm text-gray-700 font-medium">AffeeSo</span>
-      <div class="flex items-center gap-3">
-        {% if user.role.value != 'admin' %}
-          <span class="text-sm font-semibold text-amber-700">🪙 {{ user.coins }}</span>
-          <details class="relative">
-            <summary class="list-none cursor-pointer text-sm bg-amber-500 text-white px-3 py-1 rounded">Get more coins</summary>
-            <div class="absolute right-0 mt-2 w-56 bg-white border rounded shadow p-3 z-10">
-              <form action="/ui/coins/earn" method="post" class="space-y-2">
-                <input type="hidden" name="next_path" value="{{ request.url.path }}" />
-                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="20">Get 20 coins</button>
-                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="40">Get 40 coins</button>
-                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="70">Get 70 coins</button>
-              </form>
-            </div>
-          </details>
-        {% endif %}
-        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
-        <form action="/ui/logout" method="post">
-          <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
-        </form>
+<body class="affeeso-body">
+  {% include 'partials/site_header.html' %}
+  <main class="affeeso-main">
+    <div class="affeeso-container">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+        <h1 class="affeeso-page-title" style="margin:0;">Create a job</h1>
+        <a href="/dashboard" class="affeeso-btn affeeso-btn-outline">Dashboard</a>
       </div>
-    </div>
-
-    <div class="flex items-center justify-between mb-4">
-      <h1 class="text-2xl font-bold">Create a Job</h1>
-      <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
-    </div>
 
     {% if success %}
-      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
+      <div class="affeeso-alert affeeso-alert-success">{{ success }}</div>
     {% endif %}
     {% if error %}
-      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
+      <div class="affeeso-alert affeeso-alert-error">{{ error }}</div>
     {% endif %}
 
-    <section class="bg-white rounded-xl shadow p-6">
+    <section class="affeeso-card">
       <form action="/ui/jobs/create" method="post" class="space-y-4 js-paid-action" data-cost="{{ coin_costs.create_job_cost or 0 }}" data-action-label="Create Job">
         <input class="w-full border rounded p-2" name="title" type="text" placeholder="Campaign title (e.g. Summer Collection Push)" required />
         <textarea class="w-full border rounded p-2 min-h-24" name="promotion_requirement" placeholder="What promotion do you want? Include deliverables and campaign goal." required></textarea>
@@ -52,10 +29,11 @@
         <textarea class="w-full border rounded p-2 min-h-24" name="target_instagram_profiles" placeholder="What kind of Instagram profiles do you want (niche, followers range, location, audience)?" required></textarea>
         <input class="w-full border rounded p-2" name="promotion_tags" type="text" placeholder="Tags: story promotion, reel, image post, collaboration" required />
         <input class="w-full border rounded p-2" name="profile_image_url" type="url" placeholder="Optional brand profile image URL" />
-        <button class="w-full bg-indigo-600 text-white py-2 rounded">Post Job</button>
+        <button type="submit" class="affeeso-btn affeeso-btn-primary" style="width:100%;padding:12px;">Post job</button>
       </form>
       <p class="text-xs text-gray-500 mt-3">Use clear tags like story promotion, reel, image post, collaboration so advertisers can quickly match.</p>
     </section>
+    </div>
   </main>
   <div id="coinModal" class="fixed inset-0 hidden items-center justify-center bg-slate-900/50 px-4">
     <div class="w-full max-w-md rounded-xl bg-white shadow-xl border border-slate-200">

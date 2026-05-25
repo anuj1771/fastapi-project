@@ -1,0 +1,55 @@
+<link rel="stylesheet" href="/static/css/affeeso.css" />
+<div class="affeeso-topbar">
+  <div class="affeeso-container">
+    <span>Connect brands &amp; advertisers</span>
+    {% if user %}
+      <span>{{ user.email }}</span>
+    {% else %}
+      <a href="/">Sign in / Register</a>
+    {% endif %}
+  </div>
+</div>
+<header class="affeeso-header">
+  <div class="affeeso-container affeeso-header-main">
+    <a href="/" class="affeeso-logo">AffeeSo</a>
+    {% if user %}
+      <div class="affeeso-header-actions">
+        {% if user.role.value != 'admin' %}
+          <span class="affeeso-coins">🪙 {{ user.coins }} coins</span>
+          <details class="affeeso-coins-dropdown" style="position:relative;">
+            <summary>Get more coins</summary>
+            <div class="affeeso-coins-menu">
+              <form action="/ui/coins/earn" method="post">
+                <input type="hidden" name="next_path" value="{{ request.url.path }}" />
+                <button type="submit" name="amount" value="20">+20 coins</button>
+                <button type="submit" name="amount" value="40">+40 coins</button>
+                <button type="submit" name="amount" value="70">+70 coins</button>
+              </form>
+            </div>
+          </details>
+        {% endif %}
+        <a href="/profile" class="affeeso-profile-link" title="Profile">P</a>
+        <span class="affeeso-user">{{ display_name }}</span>
+        <form action="/ui/logout" method="post" style="margin:0;">
+          <button type="submit" class="affeeso-btn affeeso-btn-danger">Logout</button>
+        </form>
+      </div>
+    {% else %}
+      <span class="affeeso-user">Welcome</span>
+    {% endif %}
+  </div>
+</header>
+{% if show_nav|default(true) %}
+<nav class="affeeso-nav">
+  <div class="affeeso-container affeeso-nav-inner">
+    <a href="/" class="affeeso-nav-home"><span aria-hidden="true">←</span> Home</a>
+    {% if user %}
+      <a href="/chat-demo" class="affeeso-nav-chat" title="Chat" aria-label="Open chat">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="22" height="22" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.903-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
+        </svg>
+      </a>
+    {% endif %}
+  </div>
+</nav>
+{% endif %}
