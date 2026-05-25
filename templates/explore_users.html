@@ -45,6 +45,14 @@
             <p class="text-sm"><span class="font-semibold">Email:</span> {{ item.user.email }}</p>
             <p class="text-sm"><span class="font-semibold">Name:</span> {{ item.basic_profile.name if item.basic_profile else '-' }}</p>
             <p class="text-sm"><span class="font-semibold">Phone:</span> {{ item.basic_profile.phone_number if item.basic_profile else '-' }}</p>
+            {% if item.ad_detail and item.ad_detail.instagram_id %}
+              <p class="text-sm"><span class="font-semibold">Instagram:</span> @{{ item.ad_detail.instagram_id }}</p>
+              <p class="text-sm"><span class="font-semibold">Followers:</span> {{ item.ad_detail.instagram_followers or '-' }}</p>
+            {% endif %}
+            {% if item.brand_detail and item.brand_detail.brand_name %}
+              <p class="text-sm"><span class="font-semibold">Brand:</span> {{ item.brand_detail.brand_name }}</p>
+              <p class="text-sm"><span class="font-semibold">Website:</span> {{ item.brand_detail.website_url or '-' }}</p>
+            {% endif %}
             <div class="mt-3">
               {% if item.has_chat %}
                 <a href="/chat-demo?user_id={{ item.user.id }}" class="inline-block bg-blue-600 text-white px-3 py-2 rounded text-sm">Chat</a>

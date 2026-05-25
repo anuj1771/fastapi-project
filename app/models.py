@@ -33,6 +33,30 @@ class ProfileStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class AdvertiserVerificationStage(str, Enum):
+    """Advertiser-only workflow on ProfileApprovalRequest."""
+    INITIAL_REVIEW = "initial_review"
+    OTP_SENT = "otp_sent"
+    FINAL_REVIEW = "final_review"
+
+
+class OtpVerificationStatus(str, Enum):
+    NOT_SENT = "not_sent"
+    PENDING = "pending"
+    VERIFIED = "verified"
+
+
+class AdvertiserVerificationRequestStatus(str, Enum):
+    """High-level advertiser verification state shown to the user."""
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    OTP_PENDING = "otp_pending"
+    OTP_VERIFIED = "otp_verified"
+    PENDING_FINAL = "pending_final"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -47,6 +71,12 @@ class User(Base):
     profile = relationship("Profile", back_populates="user", uselist=False)
     basic_profiles = relationship("BasicProfile", back_populates="user")
     approval_requests = relationship("ProfileApprovalRequest", back_populates="user")
+    advertiser_profile_detail = relationship(
+        "AdvertiserProfileDetail", back_populates="user", uselist=False
+    )
+    brand_profile_detail = relationship(
+        "BrandProfileDetail", back_populates="user", uselist=False
+    )
     sent_messages = relationship(
         "Message", back_populates="sender", foreign_keys="Message.sender_id"
     )
@@ -129,7 +159,59 @@ class ProfileApprovalRequest(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # Advertiser OTP workflow (null for brand requests)
+    advertiser_verification_stage = Column(
+        SqlEnum(AdvertiserVerificationStage), nullable=True, index=True
+    )
+    generated_otp = Column(Integer, nullable=True)
+    user_entered_otp = Column(Integer, nullable=True)
+
     user = relationship("User", back_populates="approval_requests")
+
+
+class AdvertiserProfileDetail(Base):
+    __tablename__ = "advertiser_profile_details"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    instagram_id = Column(String(150), nullable=True)
+    instagram_profile_url = Column(String(500), nullable=True)
+    reel_cost = Column(Integer, nullable=True)
+    collaboration_cost = Column(Integer, nullable=True)
+    story_cost = Column(Integer, nullable=True)
+    post_cost = Column(Integer, nullable=True)
+    instagram_followers = Column(Integer, nullable=True)
+    otp_verification_status = Column(
+        SqlEnum(OtpVerificationStatus),
+        default=OtpVerificationStatus.NOT_SENT,
+        nullable=False,
+    )
+    verification_request_status = Column(
+        SqlEnum(AdvertiserVerificationRequestStatus),
+        default=AdvertiserVerificationRequestStatus.DRAFT,
+        nullable=False,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User", back_populates="advertiser_profile_detail")
+
+
+class BrandProfileDetail(Base):
+    __tablename__ = "brand_profile_details"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    brand_name = Column(String(200), nullable=True)
+    website_url = Column(String(500), nullable=True)
+    brand_email = Column(String(255), nullable=True)
+    contact_person_name = Column(String(150), nullable=True)
+    contact_person_phone = Column(String(30), nullable=True)
+    pan_number = Column(String(20), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User", back_populates="brand_profile_detail")
 
 
 class ChatConnection(Base):

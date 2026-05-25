@@ -3,6 +3,7 @@ from email.message import EmailMessage
 import logging
 import os
 from pathlib import Path
+import secrets
 import smtplib
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
@@ -53,7 +54,43 @@ def _ensure_runtime_schema():
             conn.execute(text("ALTER TABLE users ADD COLUMN coins INTEGER NOT NULL DEFAULT 0"))
 
 
+def _ensure_profile_verification_schema():
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "advertiser_profile_details" not in tables:
+        models.AdvertiserProfileDetail.__table__.create(bind=engine)
+    if "brand_profile_details" not in tables:
+        models.BrandProfileDetail.__table__.create(bind=engine)
+    par_cols = {c["name"] for c in inspector.get_columns("profile_approval_requests")}
+    alters: list[str] = []
+    if "advertiser_verification_stage" not in par_cols:
+        alters.append(
+            "ALTER TABLE profile_approval_requests ADD COLUMN advertiser_verification_stage VARCHAR(32)"
+        )
+    if "generated_otp" not in par_cols:
+        alters.append("ALTER TABLE profile_approval_requests ADD COLUMN generated_otp INTEGER")
+    if "user_entered_otp" not in par_cols:
+        alters.append("ALTER TABLE profile_approval_requests ADD COLUMN user_entered_otp INTEGER")
+    if alters:
+        with engine.begin() as conn:
+            for stmt in alters:
+                conn.execute(text(stmt))
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE profile_approval_requests
+                SET advertiser_verification_stage = 'initial_review'
+                WHERE profile_type = 'advertiser'
+                  AND status = 'pending'
+                  AND advertiser_verification_stage IS NULL
+                """
+            )
+        )
+
+
 _ensure_runtime_schema()
+_ensure_profile_verification_schema()
 
 
 def _ensure_default_coin_cost_settings(db: Session) -> None:
@@ -187,6 +224,20 @@ def _send_password_reset_email(user_email: str, token: str):
     _send_email(user_email, subject, body)
 
 
+def _send_advertiser_otp_email(user_email: str) -> None:
+    subject = "BrandBridge advertiser verification — OTP sent via Instagram"
+    body = (
+        "Please check your Instagram messages.\n\n"
+        "An OTP has been shared with you by our verification team.\n"
+        "Please enter the OTP in your profile verification section to continue verification.\n\n"
+        "If you did not request verification, you can ignore this email."
+    )
+    try:
+        _send_email(user_email, subject, body)
+    except Exception:
+        logger.exception("Failed to send advertiser OTP notification email")
+
+
 def _get_user_from_cookie(request: Request, db: Session) -> models.User | None:
     token = request.cookies.get("token")
     if not token:
@@ -225,6 +276,129 @@ def _require_completed_basic_profile(
             detail=f"{profile_type.value.title()} profile must be completed first",
         )
     return profile
+
+
+def _get_advertiser_detail(db: Session, user_id: int) -> models.AdvertiserProfileDetail | None:
+    return (
+        db.query(models.AdvertiserProfileDetail)
+        .filter(models.AdvertiserProfileDetail.user_id == user_id)
+        .first()
+    )
+
+
+def _get_or_create_advertiser_detail(db: Session, user_id: int) -> models.AdvertiserProfileDetail:
+    row = _get_advertiser_detail(db, user_id)
+    if row:
+        return row
+    row = models.AdvertiserProfileDetail(user_id=user_id)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _get_brand_detail(db: Session, user_id: int) -> models.BrandProfileDetail | None:
+    return db.query(models.BrandProfileDetail).filter(models.BrandProfileDetail.user_id == user_id).first()
+
+
+def _get_or_create_brand_detail(db: Session, user_id: int) -> models.BrandProfileDetail:
+    row = _get_brand_detail(db, user_id)
+    if row:
+        return row
+    row = models.BrandProfileDetail(user_id=user_id)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _is_advertiser_detail_complete(detail: models.AdvertiserProfileDetail | None) -> bool:
+    if not detail:
+        return False
+
+    def nonempty(value: str | None) -> bool:
+        return bool(value and str(value).strip())
+
+    if not nonempty(detail.instagram_id) or not nonempty(detail.instagram_profile_url):
+        return False
+    if detail.instagram_followers is None or detail.instagram_followers < 0:
+        return False
+    for cost in (
+        detail.reel_cost,
+        detail.collaboration_cost,
+        detail.story_cost,
+        detail.post_cost,
+    ):
+        if cost is None or cost < 0:
+            return False
+    return True
+
+
+def _is_brand_detail_complete(detail: models.BrandProfileDetail | None) -> bool:
+    if not detail:
+        return False
+
+    def nonempty(value: str | None) -> bool:
+        return bool(value and str(value).strip())
+
+    if not nonempty(detail.brand_name):
+        return False
+    if not nonempty(detail.website_url):
+        return False
+    if not nonempty(detail.brand_email) or "@" not in detail.brand_email:
+        return False
+    if not nonempty(detail.contact_person_name):
+        return False
+    phone = (detail.contact_person_phone or "").strip().replace(" ", "")
+    if not phone.isdigit() or len(phone) < 10 or len(phone) > 15:
+        return False
+    pan = (detail.pan_number or "").strip().upper().replace(" ", "")
+    if len(pan) < 10 or len(pan) > 12:
+        return False
+    return True
+
+
+def _is_advertiser_fully_complete(db: Session, user_id: int) -> bool:
+    profile_map = _get_basic_profile_map(db, user_id)
+    basic = profile_map.get(models.ProfileType.ADVERTISER.value)
+    if not _is_basic_profile_complete(basic):
+        return False
+    return _is_advertiser_detail_complete(_get_advertiser_detail(db, user_id))
+
+
+def _is_brand_fully_complete(db: Session, user_id: int) -> bool:
+    profile_map = _get_basic_profile_map(db, user_id)
+    basic = profile_map.get(models.ProfileType.BRAND.value)
+    if not _is_basic_profile_complete(basic):
+        return False
+    return _is_brand_detail_complete(_get_brand_detail(db, user_id))
+
+
+def _advertiser_instagram_locked(approval: models.ProfileApprovalRequest | None) -> bool:
+    if not approval or approval.profile_type != models.ProfileType.ADVERTISER:
+        return False
+    if approval.generated_otp is not None:
+        return True
+    if approval.advertiser_verification_stage in (
+        models.AdvertiserVerificationStage.OTP_SENT,
+        models.AdvertiserVerificationStage.FINAL_REVIEW,
+    ):
+        return True
+    return False
+
+
+def _require_brand_fully_complete(db: Session, user_id: int) -> None:
+    if not _is_brand_fully_complete(db, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Brand profile must be completed first",
+        )
+
+
+def _require_advertiser_fully_complete(db: Session, user_id: int) -> None:
+    if not _is_advertiser_fully_complete(db, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Advertiser profile must be completed first",
+        )
 
 
 def _get_approved_profile(db: Session, user_id: int, profile_type: models.ProfileType):
@@ -537,11 +711,34 @@ def admin_approve(
     )
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
+    if profile.profile_type == models.ProfileType.ADVERTISER:
+        if (
+            profile.advertiser_verification_stage
+            != models.AdvertiserVerificationStage.FINAL_REVIEW
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Advertiser can only be approved after OTP verification final review",
+            )
+        if (
+            profile.generated_otp is None
+            or profile.user_entered_otp is None
+            or profile.user_entered_otp != profile.generated_otp
+        ):
+            raise HTTPException(status_code=400, detail="Invalid OTP verification state")
+    now = datetime.utcnow()
     profile.status = models.ProfileStatus.APPROVED
-    profile.reviewed_at = datetime.utcnow()
+    profile.reviewed_at = now
     profile.rejected_until = None
     profile.rejection_reason = None
-    profile.updated_at = datetime.utcnow()
+    profile.updated_at = now
+    if profile.profile_type == models.ProfileType.ADVERTISER:
+        ad_detail = _get_advertiser_detail(db, profile.user_id)
+        if ad_detail:
+            ad_detail.verification_request_status = (
+                models.AdvertiserVerificationRequestStatus.APPROVED
+            )
+            ad_detail.updated_at = now
     db.commit()
     db.refresh(profile)
     return {"message": "Approval request approved", "request_id": profile.id}
@@ -558,10 +755,20 @@ def admin_reject(
     )
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
+    now = datetime.utcnow()
+    if profile.profile_type == models.ProfileType.ADVERTISER:
+        ad_detail = _get_advertiser_detail(db, profile.user_id)
+        if ad_detail:
+            ad_detail.otp_verification_status = models.OtpVerificationStatus.NOT_SENT
+            ad_detail.verification_request_status = models.AdvertiserVerificationRequestStatus.REJECTED
+            ad_detail.updated_at = now
+        profile.generated_otp = None
+        profile.user_entered_otp = None
+        profile.advertiser_verification_stage = None
     profile.status = models.ProfileStatus.REJECTED
-    profile.reviewed_at = datetime.utcnow()
-    profile.rejected_until = datetime.utcnow() + timedelta(days=30)
-    profile.updated_at = datetime.utcnow()
+    profile.reviewed_at = now
+    profile.rejected_until = now + timedelta(days=30)
+    profile.updated_at = now
     db.commit()
     db.refresh(profile)
     return {"message": "Approval request rejected", "request_id": profile.id}
@@ -1025,6 +1232,16 @@ def profile_page(request: Request, db: Session = Depends(get_db)):
     approval_map = {row.profile_type.value: row for row in approval_rows}
     advertiser_profile = profile_map.get(models.ProfileType.ADVERTISER.value)
     brand_profile = profile_map.get(models.ProfileType.BRAND.value)
+    advertiser_detail = _get_advertiser_detail(db, user.id)
+    brand_detail = _get_brand_detail(db, user.id)
+    advertiser_approval = approval_map.get(models.ProfileType.ADVERTISER.value)
+    instagram_locked = _advertiser_instagram_locked(advertiser_approval)
+    show_advertiser_otp_box = bool(
+        advertiser_approval
+        and advertiser_approval.status == models.ProfileStatus.PENDING
+        and advertiser_approval.advertiser_verification_stage
+        == models.AdvertiserVerificationStage.OTP_SENT
+    )
     return templates.TemplateResponse(
         request,
         "profile.html",
@@ -1034,10 +1251,14 @@ def profile_page(request: Request, db: Session = Depends(get_db)):
             "display_name": display_name,
             "advertiser_profile": advertiser_profile,
             "brand_profile": brand_profile,
-            "advertiser_request": approval_map.get(models.ProfileType.ADVERTISER.value),
+            "advertiser_detail": advertiser_detail,
+            "brand_detail": brand_detail,
+            "advertiser_request": advertiser_approval,
             "brand_request": approval_map.get(models.ProfileType.BRAND.value),
-            "advertiser_complete": _is_basic_profile_complete(advertiser_profile),
-            "brand_complete": _is_basic_profile_complete(brand_profile),
+            "advertiser_complete": _is_advertiser_fully_complete(db, user.id),
+            "brand_complete": _is_brand_fully_complete(db, user.id),
+            "instagram_locked": instagram_locked,
+            "show_advertiser_otp_box": show_advertiser_otp_box,
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
@@ -1069,6 +1290,150 @@ def ui_profile_save(
     return RedirectResponse(url="/profile?success=Profile saved successfully.", status_code=303)
 
 
+@app.post("/ui/profile/advertiser-details")
+def ui_save_advertiser_profile_details(
+    request: Request,
+    instagram_id: str = Form(""),
+    instagram_profile_url: str = Form(""),
+    reel_cost: int = Form(...),
+    collaboration_cost: int = Form(...),
+    story_cost: int = Form(...),
+    post_cost: int = Form(...),
+    instagram_followers: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    approval = _get_approval_request(db, user.id, models.ProfileType.ADVERTISER)
+    locked = _advertiser_instagram_locked(approval)
+    detail = _get_or_create_advertiser_detail(db, user.id)
+    now = datetime.utcnow()
+    if locked:
+        detail.reel_cost = reel_cost
+        detail.collaboration_cost = collaboration_cost
+        detail.story_cost = story_cost
+        detail.post_cost = post_cost
+        for c in (
+            detail.reel_cost,
+            detail.collaboration_cost,
+            detail.story_cost,
+            detail.post_cost,
+        ):
+            if c is None or c < 0:
+                return RedirectResponse(
+                    url="/profile?error=Costs+must+be+non-negative+integers.",
+                    status_code=303,
+                )
+    else:
+        detail.instagram_id = instagram_id.strip()
+        detail.instagram_profile_url = instagram_profile_url.strip()
+        detail.reel_cost = reel_cost
+        detail.collaboration_cost = collaboration_cost
+        detail.story_cost = story_cost
+        detail.post_cost = post_cost
+        detail.instagram_followers = instagram_followers
+        if not detail.instagram_id or not detail.instagram_profile_url:
+            return RedirectResponse(
+                url="/profile?error=Instagram+ID+and+profile+URL+are+required.",
+                status_code=303,
+            )
+        if detail.instagram_followers is None or detail.instagram_followers < 0:
+            return RedirectResponse(url="/profile?error=Followers+must+be+a+non-negative+number.", status_code=303)
+        for c in (
+            detail.reel_cost,
+            detail.collaboration_cost,
+            detail.story_cost,
+            detail.post_cost,
+        ):
+            if c is None or c < 0:
+                return RedirectResponse(
+                    url="/profile?error=All+rate+fields+must+be+non-negative+integers.",
+                    status_code=303,
+                )
+    detail.updated_at = now
+    db.commit()
+    return RedirectResponse(url="/profile?success=Advertiser+details+saved.", status_code=303)
+
+
+@app.post("/ui/profile/brand-details")
+def ui_save_brand_profile_details(
+    request: Request,
+    brand_name: str = Form(...),
+    website_url: str = Form(...),
+    brand_email: str = Form(...),
+    contact_person_name: str = Form(...),
+    contact_person_phone: str = Form(...),
+    pan_number: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    detail = _get_or_create_brand_detail(db, user.id)
+    phone = contact_person_phone.strip().replace(" ", "")
+    if not phone.isdigit() or len(phone) < 10 or len(phone) > 15:
+        return RedirectResponse(
+            url="/profile?error=Contact+phone+must+be+10-15+digits.",
+            status_code=303,
+        )
+    pan = pan_number.strip().upper().replace(" ", "")
+    if len(pan) < 10:
+        return RedirectResponse(url="/profile?error=PAN+number+looks+invalid.", status_code=303)
+    email_clean = brand_email.strip().lower()
+    if "@" not in email_clean:
+        return RedirectResponse(url="/profile?error=Enter+a+valid+brand+email.", status_code=303)
+    detail.brand_name = brand_name.strip()
+    detail.website_url = website_url.strip()
+    detail.brand_email = email_clean
+    detail.contact_person_name = contact_person_name.strip()
+    detail.contact_person_phone = phone
+    detail.pan_number = pan
+    detail.updated_at = datetime.utcnow()
+    db.commit()
+    return RedirectResponse(url="/profile?success=Brand+details+saved.", status_code=303)
+
+
+@app.post("/ui/profile/advertiser-verify-otp")
+def ui_advertiser_verify_otp(
+    request: Request,
+    otp: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    approval = _get_approval_request(db, user.id, models.ProfileType.ADVERTISER)
+    if (
+        not approval
+        or approval.status != models.ProfileStatus.PENDING
+        or approval.advertiser_verification_stage != models.AdvertiserVerificationStage.OTP_SENT
+    ):
+        return RedirectResponse(
+            url="/profile?error=OTP+verification+is+not+available+right+now.",
+            status_code=303,
+        )
+    try:
+        entered = int(str(otp).strip())
+    except ValueError:
+        return RedirectResponse(url="/profile?error=Enter+a+valid+6-digit+OTP.", status_code=303)
+    if approval.generated_otp is None or entered != approval.generated_otp:
+        return RedirectResponse(url="/profile?error=Invalid+OTP.+Please+try+again.", status_code=303)
+    now = datetime.utcnow()
+    approval.user_entered_otp = entered
+    approval.advertiser_verification_stage = models.AdvertiserVerificationStage.FINAL_REVIEW
+    approval.updated_at = now
+    ad_detail = _get_or_create_advertiser_detail(db, user.id)
+    ad_detail.otp_verification_status = models.OtpVerificationStatus.VERIFIED
+    ad_detail.verification_request_status = models.AdvertiserVerificationRequestStatus.PENDING_FINAL
+    ad_detail.updated_at = now
+    db.commit()
+    return RedirectResponse(
+        url="/profile?success=OTP+verified.+Your+profile+is+pending+final+admin+verification.",
+        status_code=303,
+    )
+
+
 @app.post("/ui/profile/send-approval")
 def ui_send_profile_approval(
     request: Request,
@@ -1080,7 +1445,15 @@ def ui_send_profile_approval(
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
     try:
         parsed_type = models.ProfileType(profile_type)
-        _require_completed_basic_profile(db, user.id, parsed_type)
+        if parsed_type == models.ProfileType.ADVERTISER:
+            _require_advertiser_fully_complete(db, user.id)
+        else:
+            _require_brand_fully_complete(db, user.id)
+    except HTTPException:
+        return RedirectResponse(
+            url=f"/profile?error=Complete+your+{profile_type}+profile+before+sending+approval+request.",
+            status_code=303,
+        )
     except Exception:
         return RedirectResponse(
             url=f"/profile?error=Complete your {profile_type} profile before sending approval request.",
@@ -1111,6 +1484,18 @@ def ui_send_profile_approval(
         approval_request.rejection_reason = None
         approval_request.updated_at = now
         approval_request.rejected_until = None
+        if parsed_type == models.ProfileType.ADVERTISER:
+            approval_request.advertiser_verification_stage = (
+                models.AdvertiserVerificationStage.INITIAL_REVIEW
+            )
+            approval_request.generated_otp = None
+            approval_request.user_entered_otp = None
+            ad_detail = _get_or_create_advertiser_detail(db, user.id)
+            ad_detail.otp_verification_status = models.OtpVerificationStatus.NOT_SENT
+            ad_detail.verification_request_status = (
+                models.AdvertiserVerificationRequestStatus.SUBMITTED
+            )
+            ad_detail.updated_at = now
     else:
         approval_request = models.ProfileApprovalRequest(
             user_id=user.id,
@@ -1119,6 +1504,18 @@ def ui_send_profile_approval(
             requested_at=now,
             updated_at=now,
         )
+        if parsed_type == models.ProfileType.ADVERTISER:
+            approval_request.advertiser_verification_stage = (
+                models.AdvertiserVerificationStage.INITIAL_REVIEW
+            )
+            approval_request.generated_otp = None
+            approval_request.user_entered_otp = None
+            ad_detail = _get_or_create_advertiser_detail(db, user.id)
+            ad_detail.otp_verification_status = models.OtpVerificationStatus.NOT_SENT
+            ad_detail.verification_request_status = (
+                models.AdvertiserVerificationRequestStatus.SUBMITTED
+            )
+            ad_detail.updated_at = now
         db.add(approval_request)
     db.commit()
     return RedirectResponse(
@@ -1146,10 +1543,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             .filter(models.ProfileApprovalRequest.user_id == user.id)
             .all()
         }
-        advertiser_complete = _is_basic_profile_complete(
-            profile_map.get(models.ProfileType.ADVERTISER.value)
-        )
-        brand_complete = _is_basic_profile_complete(profile_map.get(models.ProfileType.BRAND.value))
+        advertiser_complete = _is_advertiser_fully_complete(db, user.id)
+        brand_complete = _is_brand_fully_complete(db, user.id)
         advertiser_request = approval_map.get(models.ProfileType.ADVERTISER.value)
         brand_request = approval_map.get(models.ProfileType.BRAND.value)
         advertiser_approved = bool(
@@ -1193,7 +1588,13 @@ def _admin_profile_approval_page(
     if not admin_user or admin_user.role != models.UserRole.ADMIN:
         return RedirectResponse(url="/?error=Admin access required.", status_code=303)
     requests = (
-        db.query(models.ProfileApprovalRequest, models.User, models.BasicProfile)
+        db.query(
+            models.ProfileApprovalRequest,
+            models.User,
+            models.BasicProfile,
+            models.AdvertiserProfileDetail,
+            models.BrandProfileDetail,
+        )
         .join(models.User, models.User.id == models.ProfileApprovalRequest.user_id)
         .outerjoin(
             models.BasicProfile,
@@ -1201,6 +1602,14 @@ def _admin_profile_approval_page(
                 models.BasicProfile.user_id == models.ProfileApprovalRequest.user_id,
                 models.BasicProfile.profile_type == models.ProfileApprovalRequest.profile_type,
             ),
+        )
+        .outerjoin(
+            models.AdvertiserProfileDetail,
+            models.AdvertiserProfileDetail.user_id == models.ProfileApprovalRequest.user_id,
+        )
+        .outerjoin(
+            models.BrandProfileDetail,
+            models.BrandProfileDetail.user_id == models.ProfileApprovalRequest.user_id,
         )
         .filter(
             models.ProfileApprovalRequest.profile_type == profile_type,
@@ -1246,7 +1655,7 @@ def explore_advertisers_page(request: Request, db: Session = Depends(get_db)):
             status_code=303,
         )
     users = (
-        db.query(models.User, models.BasicProfile)
+        db.query(models.User, models.BasicProfile, models.AdvertiserProfileDetail)
         .join(
             models.ProfileApprovalRequest,
             and_(
@@ -1262,16 +1671,21 @@ def explore_advertisers_page(request: Request, db: Session = Depends(get_db)):
                 models.BasicProfile.profile_type == models.ProfileType.ADVERTISER,
             ),
         )
+        .outerjoin(
+            models.AdvertiserProfileDetail,
+            models.AdvertiserProfileDetail.user_id == models.User.id,
+        )
         .filter(models.User.id != user.id)
         .order_by(models.User.email.asc())
         .all()
     )
     items = []
-    for list_user, basic_profile in users:
+    for list_user, basic_profile, ad_detail in users:
         items.append(
             {
                 "user": list_user,
                 "basic_profile": basic_profile,
+                "ad_detail": ad_detail,
                 "has_chat": _has_existing_conversation(db, user.id, list_user.id),
             }
         )
@@ -1307,7 +1721,7 @@ def explore_brands_page(request: Request, db: Session = Depends(get_db)):
             status_code=303,
         )
     users = (
-        db.query(models.User, models.BasicProfile)
+        db.query(models.User, models.BasicProfile, models.BrandProfileDetail)
         .join(
             models.ProfileApprovalRequest,
             and_(
@@ -1323,16 +1737,21 @@ def explore_brands_page(request: Request, db: Session = Depends(get_db)):
                 models.BasicProfile.profile_type == models.ProfileType.BRAND,
             ),
         )
+        .outerjoin(
+            models.BrandProfileDetail,
+            models.BrandProfileDetail.user_id == models.User.id,
+        )
         .filter(models.User.id != user.id)
         .order_by(models.User.email.asc())
         .all()
     )
     items = []
-    for list_user, basic_profile in users:
+    for list_user, basic_profile, brand_detail in users:
         items.append(
             {
                 "user": list_user,
                 "basic_profile": basic_profile,
+                "brand_detail": brand_detail,
                 "has_chat": _has_existing_conversation(db, user.id, list_user.id),
             }
         )
@@ -1400,6 +1819,54 @@ def ui_start_chat(target_user_id: int, request: Request, db: Session = Depends(g
     return RedirectResponse(url=f"/chat-demo?user_id={target_user_id}", status_code=303)
 
 
+@app.post("/ui/admin/advertiser/{request_id}/send-otp")
+def ui_admin_send_advertiser_otp(request_id: int, request: Request, db: Session = Depends(get_db)):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    approval_request = (
+        db.query(models.ProfileApprovalRequest)
+        .filter(
+            models.ProfileApprovalRequest.id == request_id,
+            models.ProfileApprovalRequest.profile_type == models.ProfileType.ADVERTISER,
+            models.ProfileApprovalRequest.status == models.ProfileStatus.PENDING,
+        )
+        .first()
+    )
+    if not approval_request:
+        return RedirectResponse(url="/dashboard?error=Request not found.", status_code=303)
+    if (
+        approval_request.advertiser_verification_stage
+        != models.AdvertiserVerificationStage.INITIAL_REVIEW
+    ):
+        return RedirectResponse(
+            url="/admin/approval-requests/advertiser?error=Send+OTP+is+only+available+for+initial+review+requests.",
+            status_code=303,
+        )
+    target_user = db.query(models.User).filter(models.User.id == approval_request.user_id).first()
+    if not target_user:
+        return RedirectResponse(url="/dashboard?error=User not found.", status_code=303)
+    otp_value = secrets.randbelow(900_000) + 100_000
+    now = datetime.utcnow()
+    approval_request.generated_otp = otp_value
+    approval_request.user_entered_otp = None
+    approval_request.advertiser_verification_stage = models.AdvertiserVerificationStage.OTP_SENT
+    approval_request.updated_at = now
+    ad_detail = _get_or_create_advertiser_detail(db, approval_request.user_id)
+    ad_detail.otp_verification_status = models.OtpVerificationStatus.PENDING
+    ad_detail.verification_request_status = models.AdvertiserVerificationRequestStatus.OTP_PENDING
+    ad_detail.updated_at = now
+    db.commit()
+    try:
+        _send_advertiser_otp_email(target_user.email)
+    except Exception:
+        logger.exception("Advertiser OTP email skipped or failed (check SMTP)")
+    return RedirectResponse(
+        url="/admin/approval-requests/advertiser?success=OTP+generated+and+notification+email+sent.",
+        status_code=303,
+    )
+
+
 @app.post("/ui/admin/approval/{request_id}/approve")
 def ui_admin_approve_request(request_id: int, request: Request, db: Session = Depends(get_db)):
     admin_user = _get_user_from_cookie(request, db)
@@ -1412,11 +1879,37 @@ def ui_admin_approve_request(request_id: int, request: Request, db: Session = De
     )
     if not approval_request:
         return RedirectResponse(url="/dashboard?error=Approval request not found.", status_code=303)
+    if approval_request.profile_type == models.ProfileType.ADVERTISER:
+        if (
+            approval_request.advertiser_verification_stage
+            != models.AdvertiserVerificationStage.FINAL_REVIEW
+        ):
+            return RedirectResponse(
+                url="/admin/approval-requests/advertiser?error=Advertiser+profiles+can+only+be+approved+after+the+advertiser+verifies+OTP+and+the+request+is+in+final+review.",
+                status_code=303,
+            )
+        if (
+            approval_request.generated_otp is None
+            or approval_request.user_entered_otp is None
+            or approval_request.user_entered_otp != approval_request.generated_otp
+        ):
+            return RedirectResponse(
+                url="/admin/approval-requests/advertiser?error=OTP+verification+records+are+invalid.",
+                status_code=303,
+            )
+    now = datetime.utcnow()
     approval_request.status = models.ProfileStatus.APPROVED
-    approval_request.reviewed_at = datetime.utcnow()
+    approval_request.reviewed_at = now
     approval_request.rejected_until = None
     approval_request.rejection_reason = None
-    approval_request.updated_at = datetime.utcnow()
+    approval_request.updated_at = now
+    if approval_request.profile_type == models.ProfileType.ADVERTISER:
+        ad_detail = _get_advertiser_detail(db, approval_request.user_id)
+        if ad_detail:
+            ad_detail.verification_request_status = (
+                models.AdvertiserVerificationRequestStatus.APPROVED
+            )
+            ad_detail.updated_at = now
     db.commit()
     return RedirectResponse(
         url=f"/admin/approval-requests/{approval_request.profile_type.value}?success=Request approved.",
@@ -1436,10 +1929,20 @@ def ui_admin_reject_request(request_id: int, request: Request, db: Session = Dep
     )
     if not approval_request:
         return RedirectResponse(url="/dashboard?error=Approval request not found.", status_code=303)
+    now = datetime.utcnow()
+    if approval_request.profile_type == models.ProfileType.ADVERTISER:
+        ad_detail = _get_advertiser_detail(db, approval_request.user_id)
+        if ad_detail:
+            ad_detail.otp_verification_status = models.OtpVerificationStatus.NOT_SENT
+            ad_detail.verification_request_status = models.AdvertiserVerificationRequestStatus.REJECTED
+            ad_detail.updated_at = now
+        approval_request.generated_otp = None
+        approval_request.user_entered_otp = None
+        approval_request.advertiser_verification_stage = None
     approval_request.status = models.ProfileStatus.REJECTED
-    approval_request.reviewed_at = datetime.utcnow()
-    approval_request.rejected_until = datetime.utcnow() + timedelta(days=30)
-    approval_request.updated_at = datetime.utcnow()
+    approval_request.reviewed_at = now
+    approval_request.rejected_until = now + timedelta(days=30)
+    approval_request.updated_at = now
     db.commit()
     return RedirectResponse(
         url=f"/admin/approval-requests/{approval_request.profile_type.value}?success=Request rejected for one month.",
@@ -1454,7 +1957,7 @@ def create_job_page(request: Request, db: Session = Depends(get_db)):
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
     try:
-        _require_completed_basic_profile(db, user.id, models.ProfileType.BRAND)
+        _require_brand_fully_complete(db, user.id)
     except HTTPException:
         return RedirectResponse(
             url="/dashboard?error=Complete your brand profile to create jobs.", status_code=303
@@ -1491,7 +1994,7 @@ def ui_create_job(
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
     try:
-        _require_completed_basic_profile(db, user.id, models.ProfileType.BRAND)
+        _require_brand_fully_complete(db, user.id)
         payload = schemas.JobCreate(
             title=title,
             promotion_requirement=promotion_requirement,
@@ -1535,7 +2038,7 @@ def jobs_page(request: Request, db: Session = Depends(get_db)):
     is_admin = user.role == models.UserRole.ADMIN
     if not is_admin:
         try:
-            _require_completed_basic_profile(db, user.id, models.ProfileType.ADVERTISER)
+            _require_advertiser_fully_complete(db, user.id)
         except HTTPException:
             return RedirectResponse(
                 url="/dashboard?error=Complete your advertiser profile to see jobs.", status_code=303
@@ -1599,7 +2102,7 @@ def ui_apply_job(
             status_code=303,
         )
     try:
-        _require_completed_basic_profile(db, user.id, models.ProfileType.ADVERTISER)
+        _require_advertiser_fully_complete(db, user.id)
         payload = schemas.JobApplicationCreate(description=description)
     except ValidationError as exc:
         first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid application."
@@ -1691,7 +2194,7 @@ def brand_applications_page(request: Request, db: Session = Depends(get_db)):
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
     try:
-        _require_completed_basic_profile(db, user.id, models.ProfileType.BRAND)
+        _require_brand_fully_complete(db, user.id)
     except HTTPException:
         return RedirectResponse(
             url="/dashboard?error=Complete your brand profile to review applicants.", status_code=303

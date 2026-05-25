@@ -38,23 +38,15 @@
     </div>
 
     {% if success %}
-      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">
-        {{ success }}
-      </div>
+      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
     {% endif %}
     {% if error %}
-      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">
-        {{ error }}
-      </div>
+      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
     {% endif %}
 
     <div class="mb-4 inline-flex bg-white rounded-lg shadow p-1">
-      <button id="btn-advertiser" type="button" class="px-4 py-2 rounded-md text-sm font-semibold bg-indigo-600 text-white" onclick="showProfile('advertiser')">
-        Advertiser
-      </button>
-      <button id="btn-brand" type="button" class="px-4 py-2 rounded-md text-sm font-semibold text-gray-700" onclick="showProfile('brand')">
-        Brand
-      </button>
+      <button id="btn-advertiser" type="button" class="px-4 py-2 rounded-md text-sm font-semibold bg-indigo-600 text-white" onclick="showProfile('advertiser')">Advertiser</button>
+      <button id="btn-brand" type="button" class="px-4 py-2 rounded-md text-sm font-semibold text-gray-700" onclick="showProfile('brand')">Brand</button>
     </div>
 
     <div>
@@ -67,22 +59,65 @@
             <span class="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-700">Incomplete</span>
           {% endif %}
         </div>
-        <form action="/ui/profile/save" method="post" class="space-y-3">
+
+        <h3 class="text-sm font-semibold text-slate-700 mb-2">Basic details</h3>
+        <form action="/ui/profile/save" method="post" class="space-y-3 mb-6">
           <input type="hidden" name="profile_type" value="advertiser" />
           <input class="w-full border rounded p-2" name="name" type="text" placeholder="Name" value="{{ advertiser_profile.name if advertiser_profile else '' }}" required />
           <input class="w-full border rounded p-2" name="phone_number" type="text" placeholder="Phone Number (10-15 digits)" value="{{ advertiser_profile.phone_number if advertiser_profile else '' }}" minlength="10" maxlength="15" pattern="[0-9]{10,15}" required />
-          <button class="w-full bg-indigo-600 text-white py-2 rounded">Save Advertiser Profile</button>
+          <button class="w-full bg-indigo-600 text-white py-2 rounded">Save basic details</button>
         </form>
-        {% if advertiser_complete %}
-          <form action="/ui/profile/send-approval" method="post" class="mt-3">
-            <input type="hidden" name="profile_type" value="advertiser" />
-            <button class="w-full bg-emerald-600 text-white py-2 rounded">Send Advertiser For Approval</button>
-          </form>
+
+        <h3 class="text-sm font-semibold text-slate-700 mb-2">Instagram &amp; rates</h3>
+        {% if instagram_locked %}
+          <p class="text-xs text-amber-700 mb-2">Instagram ID, profile URL, and follower count are locked because an OTP was generated. You can still update rate fields below.</p>
         {% endif %}
+        <form action="/ui/profile/advertiser-details" method="post" class="space-y-3">
+          <input class="w-full border rounded p-2 bg-slate-50" name="instagram_id" type="text" placeholder="Instagram ID" value="{{ advertiser_detail.instagram_id if advertiser_detail else '' }}" {% if instagram_locked %}readonly{% endif %} required />
+          <input class="w-full border rounded p-2 bg-slate-50" name="instagram_profile_url" type="url" placeholder="Instagram Profile URL" value="{{ advertiser_detail.instagram_profile_url if advertiser_detail else '' }}" {% if instagram_locked %}readonly{% endif %} required />
+          <input class="w-full border rounded p-2 bg-slate-50" name="instagram_followers" type="number" min="0" step="1" placeholder="Instagram followers" value="{{ advertiser_detail.instagram_followers if advertiser_detail and advertiser_detail.instagram_followers is not none else '' }}" {% if instagram_locked %}readonly{% endif %} required />
+          <div class="grid sm:grid-cols-2 gap-3">
+            <input class="w-full border rounded p-2" name="reel_cost" type="number" min="0" step="1" placeholder="Reel cost (coins/INR)" value="{{ advertiser_detail.reel_cost if advertiser_detail and advertiser_detail.reel_cost is not none else '' }}" required />
+            <input class="w-full border rounded p-2" name="collaboration_cost" type="number" min="0" step="1" placeholder="Collaboration cost" value="{{ advertiser_detail.collaboration_cost if advertiser_detail and advertiser_detail.collaboration_cost is not none else '' }}" required />
+            <input class="w-full border rounded p-2" name="story_cost" type="number" min="0" step="1" placeholder="Story cost" value="{{ advertiser_detail.story_cost if advertiser_detail and advertiser_detail.story_cost is not none else '' }}" required />
+            <input class="w-full border rounded p-2" name="post_cost" type="number" min="0" step="1" placeholder="Post cost" value="{{ advertiser_detail.post_cost if advertiser_detail and advertiser_detail.post_cost is not none else '' }}" required />
+          </div>
+          <button class="w-full bg-slate-800 text-white py-2 rounded">Save advertiser details</button>
+        </form>
+
+        {% if show_advertiser_otp_box %}
+          <div class="mt-6 border border-violet-200 rounded-lg p-4 bg-violet-50">
+            <h3 class="text-sm font-semibold text-violet-900 mb-2">Verification OTP</h3>
+            <p class="text-xs text-violet-800 mb-3">Enter the 6-digit OTP shared with you via Instagram DM by our team, then submit for final admin review.</p>
+            <form action="/ui/profile/advertiser-verify-otp" method="post" class="flex flex-col sm:flex-row gap-2">
+              <input class="flex-1 border rounded p-2" name="otp" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit OTP" required />
+              <button type="submit" class="bg-violet-700 text-white px-4 py-2 rounded text-sm whitespace-nowrap">Verify &amp; send again</button>
+            </form>
+          </div>
+        {% endif %}
+
+        {% if advertiser_complete %}
+          {% if not advertiser_request or advertiser_request.status.value != 'pending' %}
+          <form action="/ui/profile/send-approval" method="post" class="mt-4">
+            <input type="hidden" name="profile_type" value="advertiser" />
+            <button class="w-full bg-emerald-600 text-white py-2 rounded">Send for approval</button>
+          </form>
+          {% else %}
+          <p class="mt-4 text-sm text-gray-600">A verification request is already in progress with the admin team.</p>
+          {% endif %}
+        {% endif %}
+
         {% if advertiser_request %}
-          <p class="text-xs text-gray-600 mt-2">
-            Current approval status: <span class="font-semibold">{{ advertiser_request.status.value }}</span>
-          </p>
+          <div class="mt-4 text-xs text-gray-600 space-y-1 border-t pt-3">
+            <p><span class="font-semibold">Approval status:</span> {{ advertiser_request.status.value }}</p>
+            {% if advertiser_request.advertiser_verification_stage %}
+              <p><span class="font-semibold">Admin workflow stage:</span> {{ advertiser_request.advertiser_verification_stage.value }}</p>
+            {% endif %}
+            {% if advertiser_detail %}
+              <p><span class="font-semibold">OTP verification status:</span> {{ advertiser_detail.otp_verification_status.value }}</p>
+              <p><span class="font-semibold">Verification request status:</span> {{ advertiser_detail.verification_request_status.value }}</p>
+            {% endif %}
+          </div>
         {% endif %}
         <p class="text-xs text-gray-500 mt-2">Phone must contain only digits, length 10 to 15.</p>
       </section>
@@ -96,21 +131,41 @@
             <span class="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-700">Incomplete</span>
           {% endif %}
         </div>
-        <form action="/ui/profile/save" method="post" class="space-y-3">
+
+        <h3 class="text-sm font-semibold text-slate-700 mb-2">Basic details</h3>
+        <form action="/ui/profile/save" method="post" class="space-y-3 mb-6">
           <input type="hidden" name="profile_type" value="brand" />
-          <input class="w-full border rounded p-2" name="name" type="text" placeholder="Name" value="{{ brand_profile.name if brand_profile else '' }}" required />
+          <input class="w-full border rounded p-2" name="name" type="text" placeholder="Contact / company name" value="{{ brand_profile.name if brand_profile else '' }}" required />
           <input class="w-full border rounded p-2" name="phone_number" type="text" placeholder="Phone Number (10-15 digits)" value="{{ brand_profile.phone_number if brand_profile else '' }}" minlength="10" maxlength="15" pattern="[0-9]{10,15}" required />
-          <button class="w-full bg-indigo-600 text-white py-2 rounded">Save Brand Profile</button>
+          <button class="w-full bg-indigo-600 text-white py-2 rounded">Save basic details</button>
         </form>
+
+        <h3 class="text-sm font-semibold text-slate-700 mb-2">Brand verification details</h3>
+        <p class="text-xs text-gray-500 mb-2">Brands are reviewed directly by admin (no OTP).</p>
+        <form action="/ui/profile/brand-details" method="post" class="space-y-3">
+          <input class="w-full border rounded p-2" name="brand_name" type="text" placeholder="Brand name" value="{{ brand_detail.brand_name if brand_detail else '' }}" required />
+          <input class="w-full border rounded p-2" name="website_url" type="url" placeholder="Website URL" value="{{ brand_detail.website_url if brand_detail else '' }}" required />
+          <input class="w-full border rounded p-2" name="brand_email" type="email" placeholder="Brand email" value="{{ brand_detail.brand_email if brand_detail else '' }}" required />
+          <input class="w-full border rounded p-2" name="contact_person_name" type="text" placeholder="Contact person name" value="{{ brand_detail.contact_person_name if brand_detail else '' }}" required />
+          <input class="w-full border rounded p-2" name="contact_person_phone" type="text" placeholder="Contact person phone (digits)" value="{{ brand_detail.contact_person_phone if brand_detail else '' }}" required />
+          <input class="w-full border rounded p-2" name="pan_number" type="text" placeholder="PAN number" value="{{ brand_detail.pan_number if brand_detail else '' }}" required />
+          <button class="w-full bg-slate-800 text-white py-2 rounded">Save brand details</button>
+        </form>
+
         {% if brand_complete %}
-          <form action="/ui/profile/send-approval" method="post" class="mt-3">
+          {% if not brand_request or brand_request.status.value != 'pending' %}
+          <form action="/ui/profile/send-approval" method="post" class="mt-4">
             <input type="hidden" name="profile_type" value="brand" />
-            <button class="w-full bg-emerald-600 text-white py-2 rounded">Send Brand For Approval</button>
+            <button class="w-full bg-emerald-600 text-white py-2 rounded">Send for approval</button>
           </form>
+          {% else %}
+          <p class="mt-4 text-sm text-gray-600">A verification request is already in progress with the admin team.</p>
+          {% endif %}
         {% endif %}
+
         {% if brand_request %}
-          <p class="text-xs text-gray-600 mt-2">
-            Current approval status: <span class="font-semibold">{{ brand_request.status.value }}</span>
+          <p class="text-xs text-gray-600 mt-3 border-t pt-3">
+            <span class="font-semibold">Approval status:</span> {{ brand_request.status.value }}
           </p>
         {% endif %}
         <p class="text-xs text-gray-500 mt-2">Phone must contain only digits, length 10 to 15.</p>
@@ -123,7 +178,6 @@
       const brandPanel = document.getElementById("panel-brand");
       const advertiserBtn = document.getElementById("btn-advertiser");
       const brandBtn = document.getElementById("btn-brand");
-
       if (type === "advertiser") {
         advertiserPanel.classList.remove("hidden");
         brandPanel.classList.add("hidden");

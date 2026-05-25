@@ -26,23 +26,85 @@
 
     {% if requests %}
       <div class="space-y-4">
-        {% for approval_request, request_user, basic_profile in requests %}
-          <section class="bg-white rounded-xl shadow p-5">
-            <div class="flex items-start justify-between gap-3">
+        {% for approval_request, request_user, basic_profile, ad_detail, brand_detail in requests %}
+          <section class="bg-white rounded-xl shadow p-5 border border-slate-100">
+            <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
               <div>
                 <p class="text-sm text-gray-700"><span class="font-semibold">User:</span> {{ request_user.email }}</p>
                 <p class="text-sm text-gray-700"><span class="font-semibold">Requested At:</span> {{ approval_request.requested_at }}</p>
-                <p class="text-sm text-gray-700"><span class="font-semibold">Name:</span> {{ basic_profile.name if basic_profile else '-' }}</p>
-                <p class="text-sm text-gray-700"><span class="font-semibold">Phone:</span> {{ basic_profile.phone_number if basic_profile else '-' }}</p>
+                {% if profile_type.value == 'advertiser' and approval_request.advertiser_verification_stage %}
+                  {% if approval_request.advertiser_verification_stage.value == 'initial_review' %}
+                    <span class="mt-2 inline-block text-xs font-semibold px-2 py-1 rounded-full bg-sky-100 text-sky-800">Initial review</span>
+                  {% elif approval_request.advertiser_verification_stage.value == 'otp_sent' %}
+                    <span class="mt-2 inline-block text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-800">Awaiting advertiser OTP</span>
+                  {% elif approval_request.advertiser_verification_stage.value == 'final_review' %}
+                    <span class="mt-2 inline-block text-xs font-semibold px-2 py-1 rounded-full bg-violet-100 text-violet-800">Pending OTP verification (final)</span>
+                  {% endif %}
+                {% elif profile_type.value == 'brand' %}
+                  <span class="mt-2 inline-block text-xs font-semibold px-2 py-1 rounded-full bg-slate-100 text-slate-700">Pending review</span>
+                {% endif %}
               </div>
-              <div class="flex gap-2">
-                <form action="/ui/admin/approval/{{ approval_request.id }}/approve" method="post">
-                  <button class="bg-emerald-600 text-white px-3 py-2 rounded text-sm">Approve</button>
-                </form>
-                <form action="/ui/admin/approval/{{ approval_request.id }}/reject" method="post">
-                  <button class="bg-red-600 text-white px-3 py-2 rounded text-sm">Reject</button>
-                </form>
+              <div class="flex flex-wrap gap-2">
+                {% if profile_type.value == 'advertiser' %}
+                  {% if approval_request.advertiser_verification_stage and approval_request.advertiser_verification_stage.value == 'initial_review' %}
+                    <form action="/ui/admin/advertiser/{{ approval_request.id }}/send-otp" method="post">
+                      <button type="submit" class="bg-sky-600 text-white px-3 py-2 rounded text-sm">Send OTP</button>
+                    </form>
+                  {% endif %}
+                  {% if approval_request.advertiser_verification_stage and approval_request.advertiser_verification_stage.value == 'final_review' %}
+                    <form action="/ui/admin/approval/{{ approval_request.id }}/approve" method="post">
+                      <button type="submit" class="bg-emerald-600 text-white px-3 py-2 rounded text-sm">Approve</button>
+                    </form>
+                  {% endif %}
+                  <form action="/ui/admin/approval/{{ approval_request.id }}/reject" method="post">
+                    <button type="submit" class="bg-red-600 text-white px-3 py-2 rounded text-sm">Reject</button>
+                  </form>
+                {% else %}
+                  <form action="/ui/admin/approval/{{ approval_request.id }}/approve" method="post">
+                    <button type="submit" class="bg-emerald-600 text-white px-3 py-2 rounded text-sm">Approve</button>
+                  </form>
+                  <form action="/ui/admin/approval/{{ approval_request.id }}/reject" method="post">
+                    <button type="submit" class="bg-red-600 text-white px-3 py-2 rounded text-sm">Reject</button>
+                  </form>
+                {% endif %}
               </div>
+            </div>
+
+            <div class="border-t border-slate-100 pt-3 text-sm text-gray-700 space-y-1">
+              <p><span class="font-semibold">Name:</span> {{ basic_profile.name if basic_profile else '-' }}</p>
+              <p><span class="font-semibold">Phone:</span> {{ basic_profile.phone_number if basic_profile else '-' }}</p>
+
+              {% if profile_type.value == 'advertiser' and ad_detail %}
+                <p class="pt-2 font-semibold text-slate-800">Advertiser details</p>
+                <p><span class="font-semibold">Instagram ID:</span> {{ ad_detail.instagram_id or '-' }}</p>
+                <p><span class="font-semibold">Profile URL:</span> {{ ad_detail.instagram_profile_url or '-' }}</p>
+                <p><span class="font-semibold">Followers:</span> {{ ad_detail.instagram_followers if ad_detail.instagram_followers is not none else '-' }}</p>
+                <p><span class="font-semibold">Reel cost:</span> {{ ad_detail.reel_cost if ad_detail.reel_cost is not none else '-' }}</p>
+                <p><span class="font-semibold">Collaboration cost:</span> {{ ad_detail.collaboration_cost if ad_detail.collaboration_cost is not none else '-' }}</p>
+                <p><span class="font-semibold">Story cost:</span> {{ ad_detail.story_cost if ad_detail.story_cost is not none else '-' }}</p>
+                <p><span class="font-semibold">Post cost:</span> {{ ad_detail.post_cost if ad_detail.post_cost is not none else '-' }}</p>
+                <p><span class="font-semibold">OTP verification (profile):</span> {{ ad_detail.otp_verification_status.value }}</p>
+                <p><span class="font-semibold">Verification request status:</span> {{ ad_detail.verification_request_status.value }}</p>
+                {% if approval_request.advertiser_verification_stage and approval_request.advertiser_verification_stage.value == 'final_review' %}
+                  <div class="mt-2 rounded-lg bg-violet-50 border border-violet-200 p-3">
+                    <p class="font-semibold text-violet-900">OTP comparison</p>
+                    <p><span class="font-semibold">Generated OTP:</span> {{ approval_request.generated_otp }}</p>
+                    <p><span class="font-semibold">User entered OTP:</span> {{ approval_request.user_entered_otp }}</p>
+                  </div>
+                {% elif approval_request.generated_otp is not none %}
+                  <p class="mt-2"><span class="font-semibold">Generated OTP (on file):</span> {{ approval_request.generated_otp }}</p>
+                {% endif %}
+              {% endif %}
+
+              {% if profile_type.value == 'brand' and brand_detail %}
+                <p class="pt-2 font-semibold text-slate-800">Brand details</p>
+                <p><span class="font-semibold">Brand name:</span> {{ brand_detail.brand_name or '-' }}</p>
+                <p><span class="font-semibold">Website:</span> {{ brand_detail.website_url or '-' }}</p>
+                <p><span class="font-semibold">Brand email:</span> {{ brand_detail.brand_email or '-' }}</p>
+                <p><span class="font-semibold">Contact person:</span> {{ brand_detail.contact_person_name or '-' }}</p>
+                <p><span class="font-semibold">Contact phone:</span> {{ brand_detail.contact_person_phone or '-' }}</p>
+                <p><span class="font-semibold">PAN:</span> {{ brand_detail.pan_number or '-' }}</p>
+              {% endif %}
             </div>
           </section>
         {% endfor %}
