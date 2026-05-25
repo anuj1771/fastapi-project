@@ -21,7 +21,7 @@ from app.deps import get_current_user, get_db, require_admin
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="BrandBridge")
+app = FastAPI(title="AffeeSo")
 
 base_dir = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(base_dir / "templates"))
@@ -215,7 +215,7 @@ def _send_email(to_email: str, subject: str, body: str):
 
 def _send_password_reset_email(user_email: str, token: str):
     reset_link = _build_app_url(f"/reset-password?token={token}")
-    subject = "Reset your BrandBridge password"
+    subject = "Reset your AffeeSo password"
     body = (
         "We received a request to reset your password.\n\n"
         f"Click this link to set a new password: {reset_link}\n\n"
@@ -225,7 +225,7 @@ def _send_password_reset_email(user_email: str, token: str):
 
 
 def _send_advertiser_otp_email(user_email: str) -> None:
-    subject = "BrandBridge advertiser verification — OTP sent via Instagram"
+    subject = "AffeeSo advertiser verification — OTP sent via Instagram"
     body = (
         "Please check your Instagram messages.\n\n"
         "An OTP has been shared with you by our verification team.\n"

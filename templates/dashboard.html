@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BrandBridge Dashboard</title>
+  <title>AffeeSo Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-100 min-h-screen">
   <main class="max-w-5xl mx-auto px-6 py-10">
     <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
-      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
+      <span class="text-sm text-gray-700 font-medium">AffeeSo</span>
       {% if user %}
         <div class="flex items-center gap-3">
           {% if not is_admin %}
@@ -37,11 +37,19 @@
       {% endif %}
     </div>
 
-    <a href="/" class="text-sm text-blue-700">&larr; Home</a>
-    {% if user %}
-      <a href="/chat-demo" class="ml-4 text-sm text-blue-700">Open chat demo</a>
-    {% endif %}
-    <h1 class="text-2xl font-bold mt-2">Dashboard</h1>
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <a href="/" class="inline-flex items-center gap-1.5 text-sm font-medium bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-lg shadow-sm hover:bg-slate-50">
+        <span aria-hidden="true">&larr;</span> Home
+      </a>
+      {% if user %}
+        <a href="/chat-demo" title="Chat" aria-label="Open chat" class="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-indigo-600 text-white shadow-sm hover:bg-indigo-700">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.903-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
+          </svg>
+        </a>
+      {% endif %}
+    </div>
+    <h1 class="text-2xl font-bold">Dashboard</h1>
 
     {% if user %}
       {% if success %}

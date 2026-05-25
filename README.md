@@ -1,4 +1,4 @@
-# BrandBridge
+# AffeeSo
 
 FastAPI-based collaboration platform for Brands and Advertisers with:
 
