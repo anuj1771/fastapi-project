@@ -40,6 +40,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     role = Column(SqlEnum(UserRole), default=UserRole.USER, nullable=False)
+    coins = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -177,3 +178,14 @@ class JobApplication(Base):
 
     job = relationship("Job", back_populates="applications")
     advertiser_user = relationship("User")
+
+
+class CoinCostSetting(Base):
+    __tablename__ = "coin_cost_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(80), unique=True, nullable=False, index=True)
+    cost = Column(Integer, default=0, nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    description = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)

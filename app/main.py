@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,6 +31,83 @@ TEMPLATES = [
     "Thanks for reaching out. Let's discuss campaign details.",
     "Can we schedule a short call to discuss partnership?",
 ]
+ADVERTISER_JOB_VISIBILITY_DAYS = 2
+COIN_TOP_UP_OPTIONS = {20, 40, 70}
+
+COIN_ACTION_CREATE_JOB = "create_job_cost"
+COIN_ACTION_APPLY_JOB = "apply_job_cost"
+COIN_ACTION_FIRST_CHAT = "first_chat_cost"
+
+DEFAULT_COIN_COST_SETTINGS: dict[str, tuple[int, bool, str]] = {
+    COIN_ACTION_CREATE_JOB: (20, True, "Coins charged when a brand posts a new job"),
+    COIN_ACTION_APPLY_JOB: (10, True, "Coins charged when an advertiser applies to a job"),
+    COIN_ACTION_FIRST_CHAT: (15, True, "Coins charged only once per user pair (first interaction)"),
+}
+
+
+def _ensure_runtime_schema():
+    inspector = inspect(engine)
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "coins" not in user_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN coins INTEGER NOT NULL DEFAULT 0"))
+
+
+_ensure_runtime_schema()
+
+
+def _ensure_default_coin_cost_settings(db: Session) -> None:
+    existing = {
+        row.key: row
+        for row in db.query(models.CoinCostSetting).filter(
+            models.CoinCostSetting.key.in_(list(DEFAULT_COIN_COST_SETTINGS.keys()))
+        )
+    }
+    changed = False
+    for key, (cost, enabled, description) in DEFAULT_COIN_COST_SETTINGS.items():
+        if key in existing:
+            continue
+        db.add(
+            models.CoinCostSetting(
+                key=key, cost=cost, enabled=enabled, description=description, updated_at=datetime.utcnow()
+            )
+        )
+        changed = True
+    if changed:
+        db.commit()
+
+
+def _get_coin_setting(db: Session, key: str) -> models.CoinCostSetting | None:
+    return db.query(models.CoinCostSetting).filter(models.CoinCostSetting.key == key).first()
+
+
+def _get_coin_cost(db: Session, key: str) -> int:
+    setting = _get_coin_setting(db, key)
+    if not setting or not setting.enabled:
+        return 0
+    return max(int(setting.cost or 0), 0)
+
+
+def _deduct_coins_or_raise(db: Session, user_id: int, cost: int, action_key: str) -> None:
+    if cost <= 0:
+        return
+    updated = (
+        db.query(models.User)
+        .filter(models.User.id == user_id, models.User.coins >= cost)
+        .update({models.User.coins: models.User.coins - cost})
+    )
+    if updated != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"Not enough coins for {action_key}. Please purchase more coins.",
+        )
+
+
+def _charge_action_or_raise(db: Session, user_id: int, action_key: str) -> int:
+    cost = _get_coin_cost(db, action_key)
+    _deduct_coins_or_raise(db, user_id, cost, action_key)
+    return cost
 
 
 class ConnectionManager:
@@ -312,6 +389,7 @@ def _can_chat_by_job_rules(db: Session, current_user_id: int, other_user_id: int
 
 @app.get("/", response_class=HTMLResponse)
 def landing(request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_cost_settings(db)
     user = _get_user_from_cookie(request, db)
     display_name = user.email.split("@")[0] if user else None
     return templates.TemplateResponse(
@@ -588,11 +666,17 @@ def send_message(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _ensure_default_coin_cost_settings(db)
     receiver = db.query(models.User).filter(models.User.id == payload.receiver_id).first()
     if not receiver:
         raise HTTPException(status_code=404, detail="Receiver not found")
     if not _can_chat_by_job_rules(db, current_user.id, payload.receiver_id):
         raise HTTPException(status_code=403, detail="Chat is not allowed for this user yet")
+
+    if not _has_existing_conversation(db, current_user.id, payload.receiver_id):
+        _charge_action_or_raise(db, current_user.id, COIN_ACTION_FIRST_CHAT)
+        user_one_id, user_two_id = sorted((current_user.id, payload.receiver_id))
+        db.add(models.ChatConnection(user_one_id=user_one_id, user_two_id=user_two_id))
 
     content = payload.content
     if payload.use_template:
@@ -620,6 +704,7 @@ async def websocket_chat(websocket: WebSocket, db: Session = Depends(get_db)):
     except HTTPException:
         await websocket.close(code=1008)
         return
+    _ensure_default_coin_cost_settings(db)
 
     await manager.connect(current_user.id, websocket)
     try:
@@ -645,6 +730,16 @@ async def websocket_chat(websocket: WebSocket, db: Session = Depends(get_db)):
                     {"type": "error", "detail": "Chat is not allowed for this user yet"}
                 )
                 continue
+
+            if not _has_existing_conversation(db, current_user.id, receiver_id):
+                try:
+                    _charge_action_or_raise(db, current_user.id, COIN_ACTION_FIRST_CHAT)
+                    user_one_id, user_two_id = sorted((current_user.id, receiver_id))
+                    db.add(models.ChatConnection(user_one_id=user_one_id, user_two_id=user_two_id))
+                    db.commit()
+                except HTTPException as exc:
+                    await websocket.send_json({"type": "error", "detail": str(exc.detail)})
+                    continue
 
             final_content = content.strip()
             if use_template:
@@ -865,6 +960,56 @@ def ui_logout_get():
     return _logout_response()
 
 
+@app.post("/ui/coins/earn")
+def ui_earn_coins(
+    request: Request,
+    amount: int = Form(...),
+    next_path: str = Form("/dashboard"),
+    db: Session = Depends(get_db),
+):
+    user = _get_user_from_cookie(request, db)
+    if not user:
+        return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    if user.role == models.UserRole.ADMIN:
+        return RedirectResponse(url="/dashboard?error=Admin users cannot claim coins.", status_code=303)
+    if amount not in COIN_TOP_UP_OPTIONS:
+        return RedirectResponse(url="/dashboard?error=Invalid coin amount selected.", status_code=303)
+    user.coins = (user.coins or 0) + amount
+    db.commit()
+    redirect_to = next_path if next_path.startswith("/") else "/dashboard"
+    return RedirectResponse(
+        url=f"{redirect_to}?success=Added+{amount}+coins+to+your+wallet.",
+        status_code=303,
+    )
+
+
+@app.post("/ui/admin/coins/add")
+def ui_admin_add_coins(
+    request: Request,
+    target_user_id: int = Form(...),
+    amount: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    if amount <= 0:
+        return RedirectResponse(url="/dashboard?error=Coins amount must be greater than zero.", status_code=303)
+    target_user = (
+        db.query(models.User)
+        .filter(models.User.id == target_user_id, models.User.role != models.UserRole.ADMIN)
+        .first()
+    )
+    if not target_user:
+        return RedirectResponse(url="/dashboard?error=Target user not found.", status_code=303)
+    target_user.coins = (target_user.coins or 0) + amount
+    db.commit()
+    return RedirectResponse(
+        url=f"/dashboard?success=Added+{amount}+coins+to+{target_user.email}.",
+        status_code=303,
+    )
+
+
 @app.get("/profile", response_class=HTMLResponse)
 def profile_page(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
@@ -984,6 +1129,7 @@ def ui_send_profile_approval(
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_cost_settings(db)
     user = _get_user_from_cookie(request, db)
     advertiser_complete = False
     brand_complete = False
@@ -991,6 +1137,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     brand_request = None
     advertiser_approved = False
     brand_approved = False
+    non_admin_users = []
     if user:
         profile_map = _get_basic_profile_map(db, user.id)
         approval_map = {
@@ -1009,6 +1156,13 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             advertiser_request and advertiser_request.status == models.ProfileStatus.APPROVED
         )
         brand_approved = bool(brand_request and brand_request.status == models.ProfileStatus.APPROVED)
+        if user.role == models.UserRole.ADMIN:
+            non_admin_users = (
+                db.query(models.User)
+                .filter(models.User.role != models.UserRole.ADMIN)
+                .order_by(models.User.email.asc())
+                .all()
+            )
     display_name = user.email.split("@")[0] if user else None
     return templates.TemplateResponse(
         request,
@@ -1025,6 +1179,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "advertiser_approved": advertiser_approved,
             "brand_approved": brand_approved,
             "is_admin": bool(user and user.role == models.UserRole.ADMIN),
+            "non_admin_users": non_admin_users,
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
@@ -1081,6 +1236,7 @@ def brand_approval_requests_page(request: Request, db: Session = Depends(get_db)
 
 @app.get("/explore/advertisers", response_class=HTMLResponse)
 def explore_advertisers_page(request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_cost_settings(db)
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
@@ -1130,6 +1286,9 @@ def explore_advertisers_page(request: Request, db: Session = Depends(get_db)):
             "empty_message": "No approved advertisers available right now.",
             "items": items,
             "start_chat_endpoint": "/ui/chat/start",
+            "coin_costs": {
+                "first_chat_cost": _get_coin_cost(db, COIN_ACTION_FIRST_CHAT),
+            },
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
@@ -1138,6 +1297,7 @@ def explore_advertisers_page(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/explore/brands", response_class=HTMLResponse)
 def explore_brands_page(request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_cost_settings(db)
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
@@ -1187,6 +1347,9 @@ def explore_brands_page(request: Request, db: Session = Depends(get_db)):
             "empty_message": "No approved brands available right now.",
             "items": items,
             "start_chat_endpoint": "/ui/chat/start",
+            "coin_costs": {
+                "first_chat_cost": _get_coin_cost(db, COIN_ACTION_FIRST_CHAT),
+            },
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
@@ -1195,6 +1358,7 @@ def explore_brands_page(request: Request, db: Session = Depends(get_db)):
 
 @app.post("/ui/chat/start/{target_user_id}")
 def ui_start_chat(target_user_id: int, request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_cost_settings(db)
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
@@ -1227,8 +1391,12 @@ def ui_start_chat(target_user_id: int, request: Request, db: Session = Depends(g
         .first()
     )
     if not connection:
-        db.add(models.ChatConnection(user_one_id=user_one_id, user_two_id=user_two_id))
-        db.commit()
+        try:
+            _charge_action_or_raise(db, user.id, COIN_ACTION_FIRST_CHAT)
+            db.add(models.ChatConnection(user_one_id=user_one_id, user_two_id=user_two_id))
+            db.commit()
+        except HTTPException as exc:
+            return RedirectResponse(url=f"/dashboard?error={exc.detail}", status_code=303)
     return RedirectResponse(url=f"/chat-demo?user_id={target_user_id}", status_code=303)
 
 
@@ -1281,6 +1449,7 @@ def ui_admin_reject_request(request_id: int, request: Request, db: Session = Dep
 
 @app.get("/jobs/create", response_class=HTMLResponse)
 def create_job_page(request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_cost_settings(db)
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
@@ -1297,6 +1466,9 @@ def create_job_page(request: Request, db: Session = Depends(get_db)):
             "request": request,
             "user": user,
             "display_name": user.email.split("@")[0],
+            "coin_costs": {
+                "create_job_cost": _get_coin_cost(db, COIN_ACTION_CREATE_JOB),
+            },
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
@@ -1314,6 +1486,7 @@ def ui_create_job(
     profile_image_url: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
+    _ensure_default_coin_cost_settings(db)
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
@@ -1344,6 +1517,10 @@ def ui_create_job(
         promotion_tags=payload.promotion_tags.strip(),
         profile_image_url=(payload.profile_image_url.strip() if payload.profile_image_url else None),
     )
+    try:
+        _charge_action_or_raise(db, user.id, COIN_ACTION_CREATE_JOB)
+    except HTTPException as exc:
+        return RedirectResponse(url=f"/jobs/create?error={exc.detail}", status_code=303)
     db.add(job)
     db.commit()
     return RedirectResponse(url="/jobs/create?success=Job posted successfully.", status_code=303)
@@ -1351,21 +1528,35 @@ def ui_create_job(
 
 @app.get("/jobs", response_class=HTMLResponse)
 def jobs_page(request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_cost_settings(db)
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
-    try:
-        _require_completed_basic_profile(db, user.id, models.ProfileType.ADVERTISER)
-    except HTTPException:
-        return RedirectResponse(
-            url="/dashboard?error=Complete your advertiser profile to see jobs.", status_code=303
-        )
+    is_admin = user.role == models.UserRole.ADMIN
+    if not is_admin:
+        try:
+            _require_completed_basic_profile(db, user.id, models.ProfileType.ADVERTISER)
+        except HTTPException:
+            return RedirectResponse(
+                url="/dashboard?error=Complete your advertiser profile to see jobs.", status_code=303
+            )
 
-    jobs = db.query(models.Job).order_by(models.Job.created_at.desc()).all()
-    my_applications = (
-        db.query(models.JobApplication).filter(models.JobApplication.advertiser_user_id == user.id).all()
-    )
-    applied_map = {item.job_id: item for item in my_applications}
+    if is_admin:
+        jobs = db.query(models.Job).order_by(models.Job.created_at.desc()).all()
+        applied_map = {}
+    else:
+        visible_after = datetime.utcnow() - timedelta(days=ADVERTISER_JOB_VISIBILITY_DAYS)
+        jobs = (
+            db.query(models.Job)
+            .filter(models.Job.created_at >= visible_after)
+            .order_by(models.Job.created_at.desc())
+            .all()
+        )
+        my_applications = (
+            db.query(models.JobApplication).filter(models.JobApplication.advertiser_user_id == user.id).all()
+        )
+        applied_map = {item.job_id: item for item in my_applications}
+
     return templates.TemplateResponse(
         request,
         "jobs_list.html",
@@ -1375,6 +1566,11 @@ def jobs_page(request: Request, db: Session = Depends(get_db)):
             "display_name": user.email.split("@")[0],
             "jobs": jobs,
             "applied_map": applied_map,
+            "is_admin": is_admin,
+            "advertiser_visibility_days": ADVERTISER_JOB_VISIBILITY_DAYS,
+            "coin_costs": {
+                "apply_job_cost": _get_coin_cost(db, COIN_ACTION_APPLY_JOB),
+            },
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
@@ -1388,12 +1584,20 @@ def ui_apply_job(
     description: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    _ensure_default_coin_cost_settings(db)
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    if user.role == models.UserRole.ADMIN:
+        return RedirectResponse(url="/jobs?error=Admin cannot apply to jobs.", status_code=303)
     job = db.query(models.Job).filter(models.Job.id == job_id).first()
     if not job:
         return RedirectResponse(url="/jobs?error=Job not found.", status_code=303)
+    if job.created_at < (datetime.utcnow() - timedelta(days=ADVERTISER_JOB_VISIBILITY_DAYS)):
+        return RedirectResponse(
+            url="/jobs?error=This job is older than 2 days and is no longer open for advertiser applications.",
+            status_code=303,
+        )
     try:
         _require_completed_basic_profile(db, user.id, models.ProfileType.ADVERTISER)
         payload = schemas.JobApplicationCreate(description=description)
@@ -1410,6 +1614,10 @@ def ui_apply_job(
         advertiser_user_id=user.id,
         description=payload.description.strip(),
     )
+    try:
+        _charge_action_or_raise(db, user.id, COIN_ACTION_APPLY_JOB)
+    except HTTPException as exc:
+        return RedirectResponse(url=f"/jobs?error={exc.detail}", status_code=303)
     db.add(application)
     try:
         db.commit()
@@ -1417,6 +1625,64 @@ def ui_apply_job(
         db.rollback()
         return RedirectResponse(url="/jobs?error=You already applied to this job.", status_code=303)
     return RedirectResponse(url="/jobs?success=Applied successfully.", status_code=303)
+
+
+@app.get("/admin/coin-costs", response_class=HTMLResponse)
+def admin_coin_costs_page(request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_cost_settings(db)
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    settings = db.query(models.CoinCostSetting).order_by(models.CoinCostSetting.key.asc()).all()
+    return templates.TemplateResponse(
+        request,
+        "admin_coin_costs.html",
+        {
+            "request": request,
+            "user": admin_user,
+            "display_name": admin_user.email.split("@")[0],
+            "settings": settings,
+            "success": request.query_params.get("success"),
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@app.post("/ui/admin/coin-costs/save")
+async def ui_admin_save_coin_costs(request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_cost_settings(db)
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+
+    settings = db.query(models.CoinCostSetting).all()
+    setting_by_key = {row.key: row for row in settings}
+    changed = False
+    data = await request.form()
+    for key, row in setting_by_key.items():
+        enabled_raw = data.get(f"enabled__{key}")
+        cost_raw = data.get(f"cost__{key}")
+        description_raw = data.get(f"description__{key}")
+        enabled = str(enabled_raw).lower() in {"1", "true", "on", "yes"}
+        try:
+            cost_val = int(cost_raw) if cost_raw is not None and str(cost_raw).strip() else row.cost
+        except ValueError:
+            return RedirectResponse(
+                url=f"/admin/coin-costs?error=Invalid+cost+value+for+{key}.",
+                status_code=303,
+            )
+        cost_val = max(cost_val, 0)
+        description_val = str(description_raw).strip() if description_raw is not None else row.description
+        if row.enabled != enabled or int(row.cost or 0) != cost_val or (row.description or "") != (description_val or ""):
+            row.enabled = enabled
+            row.cost = cost_val
+            row.description = description_val
+            row.updated_at = datetime.utcnow()
+            changed = True
+
+    if changed:
+        db.commit()
+    return RedirectResponse(url="/admin/coin-costs?success=Coin+settings+updated.", status_code=303)
 
 
 @app.get("/brand/applications", response_class=HTMLResponse)
@@ -1491,6 +1757,7 @@ def ui_approve_application(application_id: int, request: Request, db: Session = 
 
 @app.get("/chat-demo", response_class=HTMLResponse)
 def chat_demo(request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_cost_settings(db)
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)

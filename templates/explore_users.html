@@ -11,6 +11,20 @@
     <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
       <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
       <div class="flex items-center gap-3">
+        {% if user.role.value != 'admin' %}
+          <span class="text-sm font-semibold text-amber-700">🪙 {{ user.coins }}</span>
+          <details class="relative">
+            <summary class="list-none cursor-pointer text-sm bg-amber-500 text-white px-3 py-1 rounded">Get more coins</summary>
+            <div class="absolute right-0 mt-2 w-56 bg-white border rounded shadow p-3 z-10">
+              <form action="/ui/coins/earn" method="post" class="space-y-2">
+                <input type="hidden" name="next_path" value="{{ request.url.path }}" />
+                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="20">Get 20 coins</button>
+                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="40">Get 40 coins</button>
+                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="70">Get 70 coins</button>
+              </form>
+            </div>
+          </details>
+        {% endif %}
         <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
         <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
       </div>
@@ -35,7 +49,7 @@
               {% if item.has_chat %}
                 <a href="/chat-demo?user_id={{ item.user.id }}" class="inline-block bg-blue-600 text-white px-3 py-2 rounded text-sm">Chat</a>
               {% else %}
-                <form action="{{ start_chat_endpoint }}/{{ item.user.id }}" method="post">
+                <form action="{{ start_chat_endpoint }}/{{ item.user.id }}" method="post" class="js-paid-action" data-cost="{{ coin_costs.first_chat_cost or 0 }}" data-action-label="Start Chat">
                   <button class="bg-emerald-600 text-white px-3 py-2 rounded text-sm">Start Chat</button>
                 </form>
               {% endif %}
@@ -47,5 +61,58 @@
       <div class="bg-white rounded-xl shadow p-5 text-sm text-gray-600">{{ empty_message }}</div>
     {% endif %}
   </main>
+  <div id="coinModal" class="fixed inset-0 hidden items-center justify-center bg-slate-900/50 px-4">
+    <div class="w-full max-w-md rounded-xl bg-white shadow-xl border border-slate-200">
+      <div class="px-6 pt-6 pb-3 text-center">
+        <h3 id="coinModalTitle" class="text-lg font-semibold text-slate-900">Popup title</h3>
+        <p id="coinModalText" class="mt-2 text-sm text-slate-600">This action will cost coins.</p>
+      </div>
+      <div class="px-6 pb-6 flex gap-3 justify-center">
+        <button id="coinModalCancel" type="button" class="w-32 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Close</button>
+        <button id="coinModalOk" type="button" class="w-32 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">Ok</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const coinModal = document.getElementById("coinModal");
+    const coinModalTitle = document.getElementById("coinModalTitle");
+    const coinModalText = document.getElementById("coinModalText");
+    const coinModalCancel = document.getElementById("coinModalCancel");
+    const coinModalOk = document.getElementById("coinModalOk");
+
+    function openCoinModal({ title, text, onOk }) {
+      coinModalTitle.textContent = title || "Confirm";
+      coinModalText.textContent = text || "";
+      coinModal.classList.remove("hidden");
+      coinModal.classList.add("flex");
+
+      const cleanup = () => {
+        coinModal.classList.add("hidden");
+        coinModal.classList.remove("flex");
+        coinModalOk.onclick = null;
+        coinModalCancel.onclick = null;
+      };
+
+      coinModalCancel.onclick = () => cleanup();
+      coinModalOk.onclick = () => {
+        cleanup();
+        onOk && onOk();
+      };
+    }
+
+    document.querySelectorAll(".js-paid-action").forEach((form) => {
+      form.addEventListener("submit", (e) => {
+        const cost = Number(form.dataset.cost || "0");
+        if (!Number.isFinite(cost) || cost <= 0) return;
+        e.preventDefault();
+        const label = form.dataset.actionLabel || "This action";
+        openCoinModal({
+          title: "Popup title",
+          text: `${label} will cost ${cost} coins. Do you want to continue?`,
+          onOk: () => form.submit(),
+        });
+      });
+    });
+  </script>
 </body>
 </html>
