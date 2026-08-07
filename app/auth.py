@@ -6,7 +6,7 @@ from passlib.context import CryptContext
 
 SECRET_KEY = "change-this-secret-in-production"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 10
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = 30
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")

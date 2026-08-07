@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta
 from email.message import EmailMessage
+import json
 import logging
 import os
 from pathlib import Path
+from urllib.parse import urlencode
 import secrets
 import smtplib
 
@@ -13,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app import auth, models, schemas
 from app.db import Base, engine
@@ -44,7 +46,6 @@ DEFAULT_COIN_COST_SETTINGS: dict[str, tuple[int, bool, str]] = {
     COIN_ACTION_APPLY_JOB: (10, True, "Coins charged when an advertiser applies to a job"),
     COIN_ACTION_FIRST_CHAT: (15, True, "Coins charged only once per user pair (first interaction)"),
 }
-
 
 def _ensure_runtime_schema():
     inspector = inspect(engine)
@@ -89,8 +90,57 @@ def _ensure_profile_verification_schema():
         )
 
 
+def _ensure_job_tag_schema():
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    for table_name in (
+        "promotion_tags",
+        "target_profile_tags",
+        "job_promotion_tag_links",
+        "job_target_profile_tag_links",
+    ):
+        if table_name not in tables:
+            Base.metadata.tables[table_name].create(bind=engine)
+
+
 _ensure_runtime_schema()
 _ensure_profile_verification_schema()
+_ensure_job_tag_schema()
+
+
+def _tags_to_json(tags: list) -> str:
+    return json.dumps([{"id": tag.id, "name": tag.name} for tag in tags])
+
+
+def _normalize_tag_name(name: str) -> str:
+    return " ".join(name.strip().split())
+
+
+def _resolve_promotion_tags(db: Session, tag_ids: list[int]) -> list[models.PromotionTag]:
+    unique_ids = list(dict.fromkeys(tag_ids))
+    tags = db.query(models.PromotionTag).filter(models.PromotionTag.id.in_(unique_ids)).all()
+    if len(tags) != len(unique_ids):
+        raise HTTPException(status_code=400, detail="One or more promotion tags are invalid.")
+    return tags
+
+
+def _resolve_target_profile_tags(db: Session, tag_ids: list[int]) -> list[models.TargetProfileTag]:
+    unique_ids = list(dict.fromkeys(tag_ids))
+    tags = db.query(models.TargetProfileTag).filter(models.TargetProfileTag.id.in_(unique_ids)).all()
+    if len(tags) != len(unique_ids):
+        raise HTTPException(status_code=400, detail="One or more target profile tags are invalid.")
+    return tags
+
+
+def _tag_names_csv(tags: list) -> str:
+    return ", ".join(tag.name for tag in tags)
+
+
+def _job_query_with_tags(db: Session):
+    return db.query(models.Job).options(
+        joinedload(models.Job.promotion_tag_items),
+        joinedload(models.Job.target_profile_tag_items),
+    )
 
 
 def _ensure_default_coin_cost_settings(db: Session) -> None:
@@ -246,6 +296,24 @@ def _get_user_from_cookie(request: Request, db: Session) -> models.User | None:
     if not user_id or not user_id.isdigit():
         return None
     return db.query(models.User).filter(models.User.id == int(user_id)).first()
+
+
+def _profile_redirect_url(
+    *,
+    tab: str | None = None,
+    success: str | None = None,
+    error: str | None = None,
+) -> str:
+    params: dict[str, str] = {}
+    if tab in ("advertiser", "brand"):
+        params["tab"] = tab
+    if success:
+        params["success"] = success
+    if error:
+        params["error"] = error
+    if not params:
+        return "/profile"
+    return f"/profile?{urlencode(params)}"
 
 
 def _get_basic_profile_map(db: Session, user_id: int) -> dict[str, models.BasicProfile]:
@@ -1284,10 +1352,19 @@ def ui_profile_save(
         upsert_basic_profile(payload, user, db)
     except ValidationError as exc:
         first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid profile input."
-        return RedirectResponse(url=f"/profile?error={first_error}", status_code=303)
+        return RedirectResponse(
+            url=_profile_redirect_url(tab=profile_type, error=first_error),
+            status_code=303,
+        )
     except Exception:
-        return RedirectResponse(url="/profile?error=Failed to save profile details.", status_code=303)
-    return RedirectResponse(url="/profile?success=Profile saved successfully.", status_code=303)
+        return RedirectResponse(
+            url=_profile_redirect_url(tab=profile_type, error="Failed to save profile details."),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=_profile_redirect_url(tab=profile_type, success="Profile saved successfully."),
+        status_code=303,
+    )
 
 
 @app.post("/ui/profile/advertiser-details")
@@ -1322,7 +1399,10 @@ def ui_save_advertiser_profile_details(
         ):
             if c is None or c < 0:
                 return RedirectResponse(
-                    url="/profile?error=Costs+must+be+non-negative+integers.",
+                    url=_profile_redirect_url(
+                        tab="advertiser",
+                        error="Costs must be non-negative integers.",
+                    ),
                     status_code=303,
                 )
     else:
@@ -1335,11 +1415,20 @@ def ui_save_advertiser_profile_details(
         detail.instagram_followers = instagram_followers
         if not detail.instagram_id or not detail.instagram_profile_url:
             return RedirectResponse(
-                url="/profile?error=Instagram+ID+and+profile+URL+are+required.",
+                url=_profile_redirect_url(
+                    tab="advertiser",
+                    error="Instagram ID and profile URL are required.",
+                ),
                 status_code=303,
             )
         if detail.instagram_followers is None or detail.instagram_followers < 0:
-            return RedirectResponse(url="/profile?error=Followers+must+be+a+non-negative+number.", status_code=303)
+            return RedirectResponse(
+                url=_profile_redirect_url(
+                    tab="advertiser",
+                    error="Followers must be a non-negative number.",
+                ),
+                status_code=303,
+            )
         for c in (
             detail.reel_cost,
             detail.collaboration_cost,
@@ -1348,12 +1437,18 @@ def ui_save_advertiser_profile_details(
         ):
             if c is None or c < 0:
                 return RedirectResponse(
-                    url="/profile?error=All+rate+fields+must+be+non-negative+integers.",
+                    url=_profile_redirect_url(
+                        tab="advertiser",
+                        error="All rate fields must be non-negative integers.",
+                    ),
                     status_code=303,
                 )
     detail.updated_at = now
     db.commit()
-    return RedirectResponse(url="/profile?success=Advertiser+details+saved.", status_code=303)
+    return RedirectResponse(
+        url=_profile_redirect_url(tab="advertiser", success="Advertiser details saved."),
+        status_code=303,
+    )
 
 
 @app.post("/ui/profile/brand-details")
@@ -1374,15 +1469,24 @@ def ui_save_brand_profile_details(
     phone = contact_person_phone.strip().replace(" ", "")
     if not phone.isdigit() or len(phone) < 10 or len(phone) > 15:
         return RedirectResponse(
-            url="/profile?error=Contact+phone+must+be+10-15+digits.",
+            url=_profile_redirect_url(
+                tab="brand",
+                error="Contact phone must be 10-15 digits.",
+            ),
             status_code=303,
         )
     pan = pan_number.strip().upper().replace(" ", "")
     if len(pan) < 10:
-        return RedirectResponse(url="/profile?error=PAN+number+looks+invalid.", status_code=303)
+        return RedirectResponse(
+            url=_profile_redirect_url(tab="brand", error="PAN number looks invalid."),
+            status_code=303,
+        )
     email_clean = brand_email.strip().lower()
     if "@" not in email_clean:
-        return RedirectResponse(url="/profile?error=Enter+a+valid+brand+email.", status_code=303)
+        return RedirectResponse(
+            url=_profile_redirect_url(tab="brand", error="Enter a valid brand email."),
+            status_code=303,
+        )
     detail.brand_name = brand_name.strip()
     detail.website_url = website_url.strip()
     detail.brand_email = email_clean
@@ -1391,7 +1495,10 @@ def ui_save_brand_profile_details(
     detail.pan_number = pan
     detail.updated_at = datetime.utcnow()
     db.commit()
-    return RedirectResponse(url="/profile?success=Brand+details+saved.", status_code=303)
+    return RedirectResponse(
+        url=_profile_redirect_url(tab="brand", success="Brand details saved."),
+        status_code=303,
+    )
 
 
 @app.post("/ui/profile/advertiser-verify-otp")
@@ -1410,15 +1517,24 @@ def ui_advertiser_verify_otp(
         or approval.advertiser_verification_stage != models.AdvertiserVerificationStage.OTP_SENT
     ):
         return RedirectResponse(
-            url="/profile?error=OTP+verification+is+not+available+right+now.",
+            url=_profile_redirect_url(
+                tab="advertiser",
+                error="OTP verification is not available right now.",
+            ),
             status_code=303,
         )
     try:
         entered = int(str(otp).strip())
     except ValueError:
-        return RedirectResponse(url="/profile?error=Enter+a+valid+6-digit+OTP.", status_code=303)
+        return RedirectResponse(
+            url=_profile_redirect_url(tab="advertiser", error="Enter a valid 6-digit OTP."),
+            status_code=303,
+        )
     if approval.generated_otp is None or entered != approval.generated_otp:
-        return RedirectResponse(url="/profile?error=Invalid+OTP.+Please+try+again.", status_code=303)
+        return RedirectResponse(
+            url=_profile_redirect_url(tab="advertiser", error="Invalid OTP. Please try again."),
+            status_code=303,
+        )
     now = datetime.utcnow()
     approval.user_entered_otp = entered
     approval.advertiser_verification_stage = models.AdvertiserVerificationStage.FINAL_REVIEW
@@ -1429,7 +1545,10 @@ def ui_advertiser_verify_otp(
     ad_detail.updated_at = now
     db.commit()
     return RedirectResponse(
-        url="/profile?success=OTP+verified.+Your+profile+is+pending+final+admin+verification.",
+        url=_profile_redirect_url(
+            tab="advertiser",
+            success="OTP verified. Your profile is pending final admin verification.",
+        ),
         status_code=303,
     )
 
@@ -1451,12 +1570,18 @@ def ui_send_profile_approval(
             _require_brand_fully_complete(db, user.id)
     except HTTPException:
         return RedirectResponse(
-            url=f"/profile?error=Complete+your+{profile_type}+profile+before+sending+approval+request.",
+            url=_profile_redirect_url(
+                tab=profile_type,
+                error=f"Complete your {profile_type} profile before sending approval request.",
+            ),
             status_code=303,
         )
     except Exception:
         return RedirectResponse(
-            url=f"/profile?error=Complete your {profile_type} profile before sending approval request.",
+            url=_profile_redirect_url(
+                tab=profile_type,
+                error=f"Complete your {profile_type} profile before sending approval request.",
+            ),
             status_code=303,
         )
 
@@ -1465,17 +1590,26 @@ def ui_send_profile_approval(
     if approval_request:
         if approval_request.status == models.ProfileStatus.PENDING:
             return RedirectResponse(
-                url="/profile?error=Approval request is already pending for this profile.",
+                url=_profile_redirect_url(
+                    tab=profile_type,
+                    error="Approval request is already pending for this profile.",
+                ),
                 status_code=303,
             )
         if approval_request.status == models.ProfileStatus.APPROVED:
             return RedirectResponse(
-                url="/profile?error=This profile is already approved.",
+                url=_profile_redirect_url(
+                    tab=profile_type,
+                    error="This profile is already approved.",
+                ),
                 status_code=303,
             )
         if approval_request.rejected_until and approval_request.rejected_until > now:
             return RedirectResponse(
-                url="/profile?error=Your request was rejected. You can send again after one month.",
+                url=_profile_redirect_url(
+                    tab=profile_type,
+                    error="Your request was rejected. You can send again after one month.",
+                ),
                 status_code=303,
             )
         approval_request.status = models.ProfileStatus.PENDING
@@ -1519,7 +1653,10 @@ def ui_send_profile_approval(
         db.add(approval_request)
     db.commit()
     return RedirectResponse(
-        url=f"/profile?success={parsed_type.value.title()} profile sent for admin approval.",
+        url=_profile_redirect_url(
+            tab=profile_type,
+            success=f"{parsed_type.value.title()} profile sent for admin approval.",
+        ),
         status_code=303,
     )
 
@@ -1962,6 +2099,10 @@ def create_job_page(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(
             url="/dashboard?error=Complete your brand profile to create jobs.", status_code=303
         )
+    promotion_tags = db.query(models.PromotionTag).order_by(models.PromotionTag.name.asc()).all()
+    target_profile_tags = (
+        db.query(models.TargetProfileTag).order_by(models.TargetProfileTag.name.asc()).all()
+    )
     return templates.TemplateResponse(
         request,
         "job_create.html",
@@ -1969,6 +2110,8 @@ def create_job_page(request: Request, db: Session = Depends(get_db)):
             "request": request,
             "user": user,
             "display_name": user.email.split("@")[0],
+            "promotion_tags_json": _tags_to_json(promotion_tags),
+            "target_profile_tags_json": _tags_to_json(target_profile_tags),
             "coin_costs": {
                 "create_job_cost": _get_coin_cost(db, COIN_ACTION_CREATE_JOB),
             },
@@ -1984,8 +2127,8 @@ def ui_create_job(
     title: str = Form(...),
     promotion_requirement: str = Form(...),
     budget: str = Form(...),
-    target_instagram_profiles: str = Form(...),
-    promotion_tags: str = Form(...),
+    promotion_tag_ids: list[int] = Form(default=[]),
+    target_profile_tag_ids: list[int] = Form(default=[]),
     profile_image_url: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
@@ -1999,14 +2142,18 @@ def ui_create_job(
             title=title,
             promotion_requirement=promotion_requirement,
             budget=budget,
-            target_instagram_profiles=target_instagram_profiles,
-            promotion_tags=promotion_tags,
+            promotion_tag_ids=promotion_tag_ids,
+            target_profile_tag_ids=target_profile_tag_ids,
             profile_image_url=profile_image_url or None,
         )
+        promotion_tags = _resolve_promotion_tags(db, payload.promotion_tag_ids)
+        target_profile_tags = _resolve_target_profile_tags(db, payload.target_profile_tag_ids)
     except ValidationError as exc:
         first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid job input."
         return RedirectResponse(url=f"/jobs/create?error={first_error}", status_code=303)
-    except HTTPException:
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_400_BAD_REQUEST:
+            return RedirectResponse(url=f"/jobs/create?error={exc.detail}", status_code=303)
         return RedirectResponse(
             url="/dashboard?error=Complete your brand profile to create jobs.", status_code=303
         )
@@ -2016,9 +2163,11 @@ def ui_create_job(
         title=payload.title.strip(),
         promotion_requirement=payload.promotion_requirement.strip(),
         budget=payload.budget.strip(),
-        target_instagram_profiles=payload.target_instagram_profiles.strip(),
-        promotion_tags=payload.promotion_tags.strip(),
+        promotion_tags=_tag_names_csv(promotion_tags),
+        target_instagram_profiles=_tag_names_csv(target_profile_tags),
         profile_image_url=(payload.profile_image_url.strip() if payload.profile_image_url else None),
+        promotion_tag_items=promotion_tags,
+        target_profile_tag_items=target_profile_tags,
     )
     try:
         _charge_action_or_raise(db, user.id, COIN_ACTION_CREATE_JOB)
@@ -2045,12 +2194,12 @@ def jobs_page(request: Request, db: Session = Depends(get_db)):
             )
 
     if is_admin:
-        jobs = db.query(models.Job).order_by(models.Job.created_at.desc()).all()
+        jobs = _job_query_with_tags(db).order_by(models.Job.created_at.desc()).all()
         applied_map = {}
     else:
         visible_after = datetime.utcnow() - timedelta(days=ADVERTISER_JOB_VISIBILITY_DAYS)
         jobs = (
-            db.query(models.Job)
+            _job_query_with_tags(db)
             .filter(models.Job.created_at >= visible_after)
             .order_by(models.Job.created_at.desc())
             .all()
@@ -2188,6 +2337,125 @@ async def ui_admin_save_coin_costs(request: Request, db: Session = Depends(get_d
     return RedirectResponse(url="/admin/coin-costs?success=Coin+settings+updated.", status_code=303)
 
 
+@app.get("/admin/job-tags", response_class=HTMLResponse)
+def admin_job_tags_page(request: Request, db: Session = Depends(get_db)):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    promotion_tags = db.query(models.PromotionTag).order_by(models.PromotionTag.name.asc()).all()
+    target_profile_tags = (
+        db.query(models.TargetProfileTag).order_by(models.TargetProfileTag.name.asc()).all()
+    )
+    return templates.TemplateResponse(
+        request,
+        "admin_job_tags.html",
+        {
+            "request": request,
+            "user": admin_user,
+            "display_name": admin_user.email.split("@")[0],
+            "promotion_tags": promotion_tags,
+            "target_profile_tags": target_profile_tags,
+            "success": request.query_params.get("success"),
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@app.post("/ui/admin/job-tags/promotion/create")
+def ui_admin_create_promotion_tag(
+    request: Request,
+    name: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    try:
+        payload = schemas.JobTagCreate(name=name)
+    except ValidationError as exc:
+        first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid tag name."
+        return RedirectResponse(url=f"/admin/job-tags?error={first_error}", status_code=303)
+    normalized = _normalize_tag_name(payload.name)
+    if not normalized:
+        return RedirectResponse(url="/admin/job-tags?error=Tag name is required.", status_code=303)
+    db.add(models.PromotionTag(name=normalized))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return RedirectResponse(
+            url="/admin/job-tags?error=Promotion tag already exists.",
+            status_code=303,
+        )
+    return RedirectResponse(url="/admin/job-tags?success=Promotion tag added.", status_code=303)
+
+
+@app.post("/ui/admin/job-tags/promotion/{tag_id}/delete")
+def ui_admin_delete_promotion_tag(
+    tag_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    tag = db.query(models.PromotionTag).filter(models.PromotionTag.id == tag_id).first()
+    if not tag:
+        return RedirectResponse(url="/admin/job-tags?error=Promotion tag not found.", status_code=303)
+    db.delete(tag)
+    db.commit()
+    return RedirectResponse(url="/admin/job-tags?success=Promotion tag deleted.", status_code=303)
+
+
+@app.post("/ui/admin/job-tags/target-profile/create")
+def ui_admin_create_target_profile_tag(
+    request: Request,
+    name: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    try:
+        payload = schemas.JobTagCreate(name=name)
+    except ValidationError as exc:
+        first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid tag name."
+        return RedirectResponse(url=f"/admin/job-tags?error={first_error}", status_code=303)
+    normalized = _normalize_tag_name(payload.name)
+    if not normalized:
+        return RedirectResponse(url="/admin/job-tags?error=Tag name is required.", status_code=303)
+    db.add(models.TargetProfileTag(name=normalized))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return RedirectResponse(
+            url="/admin/job-tags?error=Target profile tag already exists.",
+            status_code=303,
+        )
+    return RedirectResponse(url="/admin/job-tags?success=Target profile tag added.", status_code=303)
+
+
+@app.post("/ui/admin/job-tags/target-profile/{tag_id}/delete")
+def ui_admin_delete_target_profile_tag(
+    tag_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    tag = db.query(models.TargetProfileTag).filter(models.TargetProfileTag.id == tag_id).first()
+    if not tag:
+        return RedirectResponse(
+            url="/admin/job-tags?error=Target profile tag not found.",
+            status_code=303,
+        )
+    db.delete(tag)
+    db.commit()
+    return RedirectResponse(url="/admin/job-tags?success=Target profile tag deleted.", status_code=303)
+
+
 @app.get("/brand/applications", response_class=HTMLResponse)
 def brand_applications_page(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
@@ -2201,7 +2469,7 @@ def brand_applications_page(request: Request, db: Session = Depends(get_db)):
         )
 
     jobs = (
-        db.query(models.Job)
+        _job_query_with_tags(db)
         .filter(models.Job.brand_user_id == user.id)
         .order_by(models.Job.created_at.desc())
         .all()
@@ -2264,7 +2532,8 @@ def chat_demo(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
-    return templates.TemplateResponse(
+    access_token = auth.create_access_token(str(user.id))
+    response = templates.TemplateResponse(
         request,
         "chat_demo.html",
         {
@@ -2274,5 +2543,8 @@ def chat_demo(request: Request, db: Session = Depends(get_db)):
             "initial_partner_id": request.query_params.get("user_id"),
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
+            "ws_token": access_token,
         },
     )
+    response.set_cookie("token", access_token, httponly=True, path="/")
+    return response

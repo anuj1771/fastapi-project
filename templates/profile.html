@@ -234,6 +234,8 @@
     </div>
   </main>
   <script>
+    const PROFILE_TAB_KEY = "affeeso_active_profile";
+
     function showProfile(type) {
       const advertiserPanel = document.getElementById("panel-advertiser");
       const brandPanel = document.getElementById("panel-brand");
@@ -259,10 +261,28 @@
         advertiserBtn.style.fontSize = "13px";
         advertiserBtn.setAttribute("aria-selected", "false");
       }
+
+      try {
+        localStorage.setItem(PROFILE_TAB_KEY, type);
+      } catch (e) {}
+    }
+
+    function getInitialProfile() {
+      const tab = new URLSearchParams(window.location.search).get("tab");
+      if (tab === "brand" || tab === "advertiser") {
+        return tab;
+      }
+      try {
+        const saved = localStorage.getItem(PROFILE_TAB_KEY);
+        if (saved === "brand" || saved === "advertiser") {
+          return saved;
+        }
+      } catch (e) {}
+      return "advertiser";
     }
 
     document.addEventListener("DOMContentLoaded", function () {
-      showProfile("advertiser");
+      showProfile(getInitialProfile());
     });
   </script>
 </body>

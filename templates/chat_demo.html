@@ -224,6 +224,7 @@
 
     <script>
         const currentUserId = Number("{{ user.id }}");
+        const wsToken = {{ ws_token|tojson }};
         const contactList = document.getElementById("contactList");
         const searchInput = document.getElementById("searchInput");
         const chatTitle = document.getElementById("chatTitle");
@@ -343,17 +344,31 @@
             }
         }
 
+        let reconnectAttempts = 0;
+
         function connectSocket() {
+            if (!wsToken) {
+                socketStatus.textContent = "Login required";
+                socketStatus.className = "status offline";
+                return;
+            }
             const protocol = location.protocol === "https:" ? "wss" : "ws";
-            socket = new WebSocket(`${protocol}://${location.host}/ws/chat`);
+            const wsUrl = `${protocol}://${location.host}/ws/chat?token=${encodeURIComponent(wsToken)}`;
+            socket = new WebSocket(wsUrl);
 
             socket.onopen = () => {
+                reconnectAttempts = 0;
                 socketStatus.textContent = "Connected";
                 socketStatus.className = "status online";
             };
             socket.onclose = () => {
                 socketStatus.textContent = "Disconnected";
                 socketStatus.className = "status offline";
+                reconnectAttempts += 1;
+                if (reconnectAttempts >= 5) {
+                    socketStatus.textContent = "Session expired — refresh or log in again";
+                    return;
+                }
                 setTimeout(connectSocket, 1500);
             };
             socket.onerror = () => {

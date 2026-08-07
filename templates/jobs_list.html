@@ -43,8 +43,30 @@
           <div class="mt-4 grid md:grid-cols-2 gap-4 text-sm">
             <p><span class="font-semibold">Promotion Need:</span> {{ job.promotion_requirement }}</p>
             <p><span class="font-semibold">Budget:</span> {{ job.budget }}</p>
-            <p><span class="font-semibold">Target Profiles:</span> {{ job.target_instagram_profiles }}</p>
-            <p><span class="font-semibold">Tags:</span> {{ job.promotion_tags }}</p>
+            <div>
+              <span class="affeeso-status-label">Target profiles</span>
+              {% if job.target_profile_tag_items %}
+                <div class="affeeso-tag-list">
+                  {% for tag in job.target_profile_tag_items %}
+                    <span class="affeeso-tag-chip">{{ tag.name }}</span>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <p style="margin:6px 0 0;font-size:14px;color:var(--text-muted);">{{ job.target_profile_labels or '—' }}</p>
+              {% endif %}
+            </div>
+            <div>
+              <span class="affeeso-status-label">Promotion tags</span>
+              {% if job.promotion_tag_items %}
+                <div class="affeeso-tag-list">
+                  {% for tag in job.promotion_tag_items %}
+                    <span class="affeeso-tag-chip">{{ tag.name }}</span>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <p style="margin:6px 0 0;font-size:14px;color:var(--text-muted);">{{ job.promotion_tag_labels or '—' }}</p>
+              {% endif %}
+            </div>
           </div>
 
           {% if is_admin %}

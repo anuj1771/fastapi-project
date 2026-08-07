@@ -163,8 +163,8 @@ class JobCreate(BaseModel):
     title: str = Field(min_length=3, max_length=150)
     promotion_requirement: str = Field(min_length=5, max_length=2000)
     budget: str = Field(min_length=1, max_length=80)
-    target_instagram_profiles: str = Field(min_length=5, max_length=2000)
-    promotion_tags: str = Field(min_length=3, max_length=255)
+    promotion_tag_ids: list[int] = Field(min_length=1)
+    target_profile_tag_ids: list[int] = Field(min_length=1)
     profile_image_url: Optional[str] = Field(default=None, max_length=255)
 
 
@@ -174,14 +174,18 @@ class JobOut(BaseModel):
     title: str
     promotion_requirement: str
     budget: str
-    target_instagram_profiles: str
-    promotion_tags: str
+    target_instagram_profiles: Optional[str] = None
+    promotion_tags: Optional[str] = None
     profile_image_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class JobTagCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
 
 
 class JobApplicationCreate(BaseModel):

@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
     UniqueConstraint,
 )
@@ -226,6 +227,59 @@ class ChatConnection(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+job_promotion_tag_links = Table(
+    "job_promotion_tag_links",
+    Base.metadata,
+    Column("job_id", Integer, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "promotion_tag_id",
+        Integer,
+        ForeignKey("promotion_tags.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+job_target_profile_tag_links = Table(
+    "job_target_profile_tag_links",
+    Base.metadata,
+    Column("job_id", Integer, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "target_profile_tag_id",
+        Integer,
+        ForeignKey("target_profile_tags.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+
+class PromotionTag(Base):
+    __tablename__ = "promotion_tags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    jobs = relationship(
+        "Job",
+        secondary=job_promotion_tag_links,
+        back_populates="promotion_tag_items",
+    )
+
+
+class TargetProfileTag(Base):
+    __tablename__ = "target_profile_tags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    jobs = relationship(
+        "Job",
+        secondary=job_target_profile_tag_links,
+        back_populates="target_profile_tag_items",
+    )
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
@@ -234,14 +288,36 @@ class Job(Base):
     title = Column(String(150), nullable=False)
     promotion_requirement = Column(Text, nullable=False)
     budget = Column(String(80), nullable=False)
-    target_instagram_profiles = Column(Text, nullable=False)
-    promotion_tags = Column(String(255), nullable=False)
+    target_instagram_profiles = Column(Text, nullable=True)
+    promotion_tags = Column(String(255), nullable=True)
     profile_image_url = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     brand_user = relationship("User")
     applications = relationship("JobApplication", back_populates="job", cascade="all, delete-orphan")
+    promotion_tag_items = relationship(
+        "PromotionTag",
+        secondary=job_promotion_tag_links,
+        back_populates="jobs",
+    )
+    target_profile_tag_items = relationship(
+        "TargetProfileTag",
+        secondary=job_target_profile_tag_links,
+        back_populates="jobs",
+    )
+
+    @property
+    def promotion_tag_labels(self) -> str:
+        if self.promotion_tag_items:
+            return ", ".join(tag.name for tag in self.promotion_tag_items)
+        return self.promotion_tags or ""
+
+    @property
+    def target_profile_labels(self) -> str:
+        if self.target_profile_tag_items:
+            return ", ".join(tag.name for tag in self.target_profile_tag_items)
+        return self.target_instagram_profiles or ""
 
 
 class JobApplication(Base):
