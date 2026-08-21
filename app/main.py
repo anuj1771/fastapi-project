@@ -1370,6 +1370,8 @@ def ui_profile_save(
 @app.post("/ui/profile/advertiser-details")
 def ui_save_advertiser_profile_details(
     request: Request,
+    name: str = Form(...),
+    phone_number: str = Form(...),
     instagram_id: str = Form(""),
     instagram_profile_url: str = Form(""),
     reel_cost: int = Form(...),
@@ -1382,6 +1384,28 @@ def ui_save_advertiser_profile_details(
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    try:
+        payload = schemas.BasicProfileUpsert(
+            profile_type=models.ProfileType.ADVERTISER,
+            name=name,
+            phone_number=phone_number,
+        )
+        upsert_basic_profile(payload, user, db)
+    except ValidationError as exc:
+        first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid profile input."
+        return RedirectResponse(
+            url=_profile_redirect_url(tab="advertiser", error=first_error),
+            status_code=303,
+        )
+    except Exception:
+        return RedirectResponse(
+            url=_profile_redirect_url(
+                tab="advertiser",
+                error="Failed to save advertiser profile.",
+            ),
+            status_code=303,
+        )
+
     approval = _get_approval_request(db, user.id, models.ProfileType.ADVERTISER)
     locked = _advertiser_instagram_locked(approval)
     detail = _get_or_create_advertiser_detail(db, user.id)
@@ -1446,7 +1470,7 @@ def ui_save_advertiser_profile_details(
     detail.updated_at = now
     db.commit()
     return RedirectResponse(
-        url=_profile_redirect_url(tab="advertiser", success="Advertiser details saved."),
+        url=_profile_redirect_url(tab="advertiser", success="Advertiser profile saved."),
         status_code=303,
     )
 
@@ -1454,6 +1478,8 @@ def ui_save_advertiser_profile_details(
 @app.post("/ui/profile/brand-details")
 def ui_save_brand_profile_details(
     request: Request,
+    name: str = Form(...),
+    phone_number: str = Form(...),
     brand_name: str = Form(...),
     website_url: str = Form(...),
     brand_email: str = Form(...),
@@ -1465,6 +1491,25 @@ def ui_save_brand_profile_details(
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    try:
+        payload = schemas.BasicProfileUpsert(
+            profile_type=models.ProfileType.BRAND,
+            name=name,
+            phone_number=phone_number,
+        )
+        upsert_basic_profile(payload, user, db)
+    except ValidationError as exc:
+        first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid profile input."
+        return RedirectResponse(
+            url=_profile_redirect_url(tab="brand", error=first_error),
+            status_code=303,
+        )
+    except Exception:
+        return RedirectResponse(
+            url=_profile_redirect_url(tab="brand", error="Failed to save brand profile."),
+            status_code=303,
+        )
+
     detail = _get_or_create_brand_detail(db, user.id)
     phone = contact_person_phone.strip().replace(" ", "")
     if not phone.isdigit() or len(phone) < 10 or len(phone) > 15:
@@ -1496,7 +1541,7 @@ def ui_save_brand_profile_details(
     detail.updated_at = datetime.utcnow()
     db.commit()
     return RedirectResponse(
-        url=_profile_redirect_url(tab="brand", success="Brand details saved."),
+        url=_profile_redirect_url(tab="brand", success="Brand profile saved."),
         status_code=303,
     )
 

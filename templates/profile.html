@@ -39,10 +39,8 @@
           {% endif %}
         </div>
 
-        <div class="affeeso-form-section">
-          <h3 class="affeeso-form-section__title">Basic details</h3>
-          <form action="/ui/profile/save" method="post" class="affeeso-form-stack">
-            <input type="hidden" name="profile_type" value="advertiser" />
+        <form action="/ui/profile/advertiser-details" method="post" class="affeeso-form-stack">
+          <div class="affeeso-form-section">
             <div class="affeeso-form-row affeeso-form-row--2">
               <div class="affeeso-field">
                 <label for="adv-name">Name</label>
@@ -53,18 +51,9 @@
                 <input class="affeeso-input" id="adv-phone" name="phone_number" type="text" placeholder="10–15 digits" value="{{ advertiser_profile.phone_number if advertiser_profile else '' }}" minlength="10" maxlength="15" pattern="[0-9]{10,15}" required />
               </div>
             </div>
-            <div class="affeeso-form-actions">
-              <button type="submit" class="affeeso-btn affeeso-btn-primary">Save basic details</button>
-            </div>
-          </form>
-        </div>
-
-        <div class="affeeso-form-section">
-          <h3 class="affeeso-form-section__title">Instagram &amp; rates</h3>
-          {% if instagram_locked %}
-            <p class="affeeso-note affeeso-note--warn">Instagram ID, profile URL, and follower count are locked because an OTP was generated. You can still update rate fields below.</p>
-          {% endif %}
-          <form action="/ui/profile/advertiser-details" method="post" class="affeeso-form-stack">
+            {% if instagram_locked %}
+              <p class="affeeso-note affeeso-note--warn">Instagram ID, profile URL, and follower count are locked because an OTP was generated. You can still update rate fields below.</p>
+            {% endif %}
             <div class="affeeso-form-row affeeso-form-row--2">
               <div class="affeeso-field">
                 <label for="adv-ig-id">Instagram ID</label>
@@ -98,10 +87,10 @@
               </div>
             </div>
             <div class="affeeso-form-actions">
-              <button type="submit" class="affeeso-btn affeeso-btn-action affeeso-btn-action--secondary">Save advertiser details</button>
+              <button type="submit" class="affeeso-btn affeeso-btn-primary">Save advertiser profile</button>
             </div>
-          </form>
-        </div>
+          </div>
+        </form>
 
         {% if show_advertiser_otp_box %}
           <div class="affeeso-otp-box">
@@ -153,10 +142,9 @@
           {% endif %}
         </div>
 
-        <div class="affeeso-form-section">
-          <h3 class="affeeso-form-section__title">Basic details</h3>
-          <form action="/ui/profile/save" method="post" class="affeeso-form-stack">
-            <input type="hidden" name="profile_type" value="brand" />
+        <form action="/ui/profile/brand-details" method="post" class="affeeso-form-stack">
+          <div class="affeeso-form-section">
+            <p class="affeeso-note">Brands are reviewed directly by admin (no OTP).</p>
             <div class="affeeso-form-row affeeso-form-row--2">
               <div class="affeeso-field">
                 <label for="brand-name-basic">Contact / company name</label>
@@ -167,16 +155,6 @@
                 <input class="affeeso-input" id="brand-phone" name="phone_number" type="text" placeholder="10–15 digits" value="{{ brand_profile.phone_number if brand_profile else '' }}" minlength="10" maxlength="15" pattern="[0-9]{10,15}" required />
               </div>
             </div>
-            <div class="affeeso-form-actions">
-              <button type="submit" class="affeeso-btn affeeso-btn-primary">Save basic details</button>
-            </div>
-          </form>
-        </div>
-
-        <div class="affeeso-form-section">
-          <h3 class="affeeso-form-section__title">Brand verification details</h3>
-          <p class="affeeso-note">Brands are reviewed directly by admin (no OTP).</p>
-          <form action="/ui/profile/brand-details" method="post" class="affeeso-form-stack">
             <div class="affeeso-form-row affeeso-form-row--2">
               <div class="affeeso-field">
                 <label for="brand-name">Brand name</label>
@@ -208,10 +186,10 @@
               </div>
             </div>
             <div class="affeeso-form-actions">
-              <button type="submit" class="affeeso-btn affeeso-btn-action affeeso-btn-action--secondary">Save brand details</button>
+              <button type="submit" class="affeeso-btn affeeso-btn-primary">Save brand profile</button>
             </div>
-          </form>
-        </div>
+          </div>
+        </form>
 
         {% if brand_complete %}
           {% if not brand_request or brand_request.status.value != 'pending' %}
