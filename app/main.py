@@ -39,11 +39,13 @@ COIN_TOP_UP_OPTIONS = {20, 40, 70}
 
 COIN_ACTION_CREATE_JOB = "create_job_cost"
 COIN_ACTION_APPLY_JOB = "apply_job_cost"
+COIN_ACTION_EXPLORE_PROFILE = "explore_profile_cost"
 COIN_ACTION_FIRST_CHAT = "first_chat_cost"
 
 DEFAULT_COIN_COST_SETTINGS: dict[str, tuple[int, bool, str]] = {
     COIN_ACTION_CREATE_JOB: (20, True, "Coins charged when a brand posts a new job"),
     COIN_ACTION_APPLY_JOB: (10, True, "Coins charged when an advertiser applies to a job"),
+    COIN_ACTION_EXPLORE_PROFILE: (10, True, "Coins charged when exploring advertiser or brand profiles"),
     COIN_ACTION_FIRST_CHAT: (15, True, "Coins charged only once per user pair (first interaction)"),
 }
 
@@ -175,6 +177,16 @@ def _get_coin_cost(db: Session, key: str) -> int:
     return max(int(setting.cost or 0), 0)
 
 
+def _is_admin_user(user: models.User | None) -> bool:
+    return bool(user is not None and user.role == models.UserRole.ADMIN)
+
+
+def _coin_cost_for_user(db: Session, user: models.User | None, key: str) -> int:
+    if _is_admin_user(user):
+        return 0
+    return _get_coin_cost(db, key)
+
+
 def _deduct_coins_or_raise(db: Session, user_id: int, cost: int, action_key: str) -> None:
     if cost <= 0:
         return
@@ -191,9 +203,11 @@ def _deduct_coins_or_raise(db: Session, user_id: int, cost: int, action_key: str
         )
 
 
-def _charge_action_or_raise(db: Session, user_id: int, action_key: str) -> int:
+def _charge_action_or_raise(db: Session, user: models.User, action_key: str) -> int:
+    if _is_admin_user(user):
+        return 0
     cost = _get_coin_cost(db, action_key)
-    _deduct_coins_or_raise(db, user_id, cost, action_key)
+    _deduct_coins_or_raise(db, user.id, cost, action_key)
     return cost
 
 
@@ -629,6 +643,38 @@ def _can_chat_by_job_rules(db: Session, current_user_id: int, other_user_id: int
     return False
 
 
+def _normalize_instagram_handle(value: str | None) -> str:
+    cleaned = (value or "").strip()
+    if cleaned.startswith("@"):
+        cleaned = cleaned[1:].strip()
+    return cleaned
+
+
+def _chat_display_for_user(user: models.User) -> schemas.RegisteredUserItem:
+    profile_types = {row.profile_type for row in (user.basic_profiles or [])}
+    ad_detail = user.advertiser_profile_detail
+    brand_detail = user.brand_profile_detail
+    has_instagram = models.ProfileType.ADVERTISER in profile_types or ad_detail is not None
+    has_company = models.ProfileType.BRAND in profile_types or brand_detail is not None
+    instagram_id = _normalize_instagram_handle(ad_detail.instagram_id if ad_detail else None)
+    company_name = (brand_detail.brand_name or "").strip() if brand_detail else ""
+    return schemas.RegisteredUserItem(
+        id=user.id,
+        has_company=has_company,
+        has_instagram=has_instagram,
+        company_name=company_name or None,
+        instagram_id=instagram_id or None,
+    )
+
+
+def _chat_user_query(db: Session):
+    return db.query(models.User).options(
+        joinedload(models.User.advertiser_profile_detail),
+        joinedload(models.User.brand_profile_detail),
+        joinedload(models.User.basic_profiles),
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 def landing(request: Request, db: Session = Depends(get_db)):
     _ensure_default_coin_cost_settings(db)
@@ -928,11 +974,20 @@ def available_users(
 def discover_users(
     current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    users = db.query(models.User).filter(models.User.id != current_user.id).all()
+    if _is_admin_user(current_user):
+        users = (
+            _chat_user_query(db)
+            .filter(models.User.id != current_user.id)
+            .order_by(models.User.email.asc())
+            .all()
+        )
+        return [_chat_display_for_user(user) for user in users]
+
+    users = _chat_user_query(db).filter(models.User.id != current_user.id).all()
     allowed_users = [
         user for user in users if _can_chat_by_job_rules(db, current_user.id, user.id)
     ]
-    return [schemas.RegisteredUserItem(id=user.id, email=user.email) for user in allowed_users]
+    return [_chat_display_for_user(user) for user in allowed_users]
 
 
 @app.post("/chat/send", response_model=schemas.MessageOut)
@@ -945,11 +1000,11 @@ def send_message(
     receiver = db.query(models.User).filter(models.User.id == payload.receiver_id).first()
     if not receiver:
         raise HTTPException(status_code=404, detail="Receiver not found")
-    if not _can_chat_by_job_rules(db, current_user.id, payload.receiver_id):
+    if not _can_chat_with_user(db, current_user, payload.receiver_id):
         raise HTTPException(status_code=403, detail="Chat is not allowed for this user yet")
 
     if not _has_existing_conversation(db, current_user.id, payload.receiver_id):
-        _charge_action_or_raise(db, current_user.id, COIN_ACTION_FIRST_CHAT)
+        _charge_action_or_raise(db, current_user, COIN_ACTION_FIRST_CHAT)
         user_one_id, user_two_id = sorted((current_user.id, payload.receiver_id))
         db.add(models.ChatConnection(user_one_id=user_one_id, user_two_id=user_two_id))
 
@@ -1000,7 +1055,7 @@ async def websocket_chat(websocket: WebSocket, db: Session = Depends(get_db)):
             if not receiver:
                 await websocket.send_json({"type": "error", "detail": "Receiver not found"})
                 continue
-            if not _can_chat_by_job_rules(db, current_user.id, receiver_id):
+            if not _can_chat_with_user(db, current_user, receiver_id):
                 await websocket.send_json(
                     {"type": "error", "detail": "Chat is not allowed for this user yet"}
                 )
@@ -1008,7 +1063,7 @@ async def websocket_chat(websocket: WebSocket, db: Session = Depends(get_db)):
 
             if not _has_existing_conversation(db, current_user.id, receiver_id):
                 try:
-                    _charge_action_or_raise(db, current_user.id, COIN_ACTION_FIRST_CHAT)
+                    _charge_action_or_raise(db, current_user, COIN_ACTION_FIRST_CHAT)
                     user_one_id, user_two_id = sorted((current_user.id, receiver_id))
                     db.add(models.ChatConnection(user_one_id=user_one_id, user_two_id=user_two_id))
                     db.commit()
@@ -1062,7 +1117,7 @@ def chat_history(
     other = db.query(models.User).filter(models.User.id == user_id).first()
     if not other:
         raise HTTPException(status_code=404, detail="User not found")
-    if not _can_chat_by_job_rules(db, current_user.id, user_id):
+    if not _can_chat_with_user(db, current_user, user_id):
         raise HTTPException(status_code=403, detail="Chat is not allowed for this user yet")
 
     messages = (
@@ -1831,7 +1886,7 @@ def explore_advertisers_page(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
-    if not _is_profile_type_approved(db, user.id, models.ProfileType.BRAND):
+    if not _is_admin_user(user) and not _is_profile_type_approved(db, user.id, models.ProfileType.BRAND):
         return RedirectResponse(
             url="/dashboard?error=Only approved brands can explore advertisers.",
             status_code=303,
@@ -1883,8 +1938,10 @@ def explore_advertisers_page(request: Request, db: Session = Depends(get_db)):
             "items": items,
             "start_chat_endpoint": "/ui/chat/start",
             "coin_costs": {
-                "first_chat_cost": _get_coin_cost(db, COIN_ACTION_FIRST_CHAT),
+                "first_chat_cost": _coin_cost_for_user(db, user, COIN_ACTION_FIRST_CHAT),
+                "explore_profile_cost": _coin_cost_for_user(db, user, COIN_ACTION_EXPLORE_PROFILE),
             },
+            "is_admin": _is_admin_user(user),
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
@@ -1897,7 +1954,7 @@ def explore_brands_page(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
-    if not _is_profile_type_approved(db, user.id, models.ProfileType.ADVERTISER):
+    if not _is_admin_user(user) and not _is_profile_type_approved(db, user.id, models.ProfileType.ADVERTISER):
         return RedirectResponse(
             url="/dashboard?error=Only approved advertisers can explore brands.",
             status_code=303,
@@ -1949,8 +2006,10 @@ def explore_brands_page(request: Request, db: Session = Depends(get_db)):
             "items": items,
             "start_chat_endpoint": "/ui/chat/start",
             "coin_costs": {
-                "first_chat_cost": _get_coin_cost(db, COIN_ACTION_FIRST_CHAT),
+                "first_chat_cost": _coin_cost_for_user(db, user, COIN_ACTION_FIRST_CHAT),
+                "explore_profile_cost": _coin_cost_for_user(db, user, COIN_ACTION_EXPLORE_PROFILE),
             },
+            "is_admin": _is_admin_user(user),
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
@@ -1976,7 +2035,7 @@ def ui_start_chat(target_user_id: int, request: Request, db: Session = Depends(g
     is_valid_pair = (current_is_brand and target_is_advertiser) or (
         current_is_advertiser and target_is_brand
     )
-    if not is_valid_pair:
+    if not is_valid_pair and not _is_admin_user(user):
         return RedirectResponse(
             url="/dashboard?error=Chat can be started only between approved brand and approved advertiser.",
             status_code=303,
@@ -1993,7 +2052,7 @@ def ui_start_chat(target_user_id: int, request: Request, db: Session = Depends(g
     )
     if not connection:
         try:
-            _charge_action_or_raise(db, user.id, COIN_ACTION_FIRST_CHAT)
+            _charge_action_or_raise(db, user, COIN_ACTION_FIRST_CHAT)
             db.add(models.ChatConnection(user_one_id=user_one_id, user_two_id=user_two_id))
             db.commit()
         except HTTPException as exc:
@@ -2138,12 +2197,13 @@ def create_job_page(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
-    try:
-        _require_brand_fully_complete(db, user.id)
-    except HTTPException:
-        return RedirectResponse(
-            url="/dashboard?error=Complete your brand profile to create jobs.", status_code=303
-        )
+    if not _is_admin_user(user):
+        try:
+            _require_brand_fully_complete(db, user.id)
+        except HTTPException:
+            return RedirectResponse(
+                url="/dashboard?error=Complete your brand profile to create jobs.", status_code=303
+            )
     promotion_tags = db.query(models.PromotionTag).order_by(models.PromotionTag.name.asc()).all()
     target_profile_tags = (
         db.query(models.TargetProfileTag).order_by(models.TargetProfileTag.name.asc()).all()
@@ -2158,8 +2218,9 @@ def create_job_page(request: Request, db: Session = Depends(get_db)):
             "promotion_tags_json": _tags_to_json(promotion_tags),
             "target_profile_tags_json": _tags_to_json(target_profile_tags),
             "coin_costs": {
-                "create_job_cost": _get_coin_cost(db, COIN_ACTION_CREATE_JOB),
+                "create_job_cost": _coin_cost_for_user(db, user, COIN_ACTION_CREATE_JOB),
             },
+            "is_admin": _is_admin_user(user),
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
@@ -2181,8 +2242,14 @@ def ui_create_job(
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    if not _is_admin_user(user):
+        try:
+            _require_brand_fully_complete(db, user.id)
+        except HTTPException:
+            return RedirectResponse(
+                url="/dashboard?error=Complete your brand profile to create jobs.", status_code=303
+            )
     try:
-        _require_brand_fully_complete(db, user.id)
         payload = schemas.JobCreate(
             title=title,
             promotion_requirement=promotion_requirement,
@@ -2215,7 +2282,7 @@ def ui_create_job(
         target_profile_tag_items=target_profile_tags,
     )
     try:
-        _charge_action_or_raise(db, user.id, COIN_ACTION_CREATE_JOB)
+        _charge_action_or_raise(db, user, COIN_ACTION_CREATE_JOB)
     except HTTPException as exc:
         return RedirectResponse(url=f"/jobs/create?error={exc.detail}", status_code=303)
     db.add(job)
@@ -2240,7 +2307,6 @@ def jobs_page(request: Request, db: Session = Depends(get_db)):
 
     if is_admin:
         jobs = _job_query_with_tags(db).order_by(models.Job.created_at.desc()).all()
-        applied_map = {}
     else:
         visible_after = datetime.utcnow() - timedelta(days=ADVERTISER_JOB_VISIBILITY_DAYS)
         jobs = (
@@ -2249,10 +2315,10 @@ def jobs_page(request: Request, db: Session = Depends(get_db)):
             .order_by(models.Job.created_at.desc())
             .all()
         )
-        my_applications = (
-            db.query(models.JobApplication).filter(models.JobApplication.advertiser_user_id == user.id).all()
-        )
-        applied_map = {item.job_id: item for item in my_applications}
+    my_applications = (
+        db.query(models.JobApplication).filter(models.JobApplication.advertiser_user_id == user.id).all()
+    )
+    applied_map = {item.job_id: item for item in my_applications}
 
     return templates.TemplateResponse(
         request,
@@ -2266,7 +2332,7 @@ def jobs_page(request: Request, db: Session = Depends(get_db)):
             "is_admin": is_admin,
             "advertiser_visibility_days": ADVERTISER_JOB_VISIBILITY_DAYS,
             "coin_costs": {
-                "apply_job_cost": _get_coin_cost(db, COIN_ACTION_APPLY_JOB),
+                "apply_job_cost": _coin_cost_for_user(db, user, COIN_ACTION_APPLY_JOB),
             },
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
@@ -2285,18 +2351,19 @@ def ui_apply_job(
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
-    if user.role == models.UserRole.ADMIN:
-        return RedirectResponse(url="/jobs?error=Admin cannot apply to jobs.", status_code=303)
     job = db.query(models.Job).filter(models.Job.id == job_id).first()
     if not job:
         return RedirectResponse(url="/jobs?error=Job not found.", status_code=303)
-    if job.created_at < (datetime.utcnow() - timedelta(days=ADVERTISER_JOB_VISIBILITY_DAYS)):
+    if not _is_admin_user(user) and job.created_at < (
+        datetime.utcnow() - timedelta(days=ADVERTISER_JOB_VISIBILITY_DAYS)
+    ):
         return RedirectResponse(
             url="/jobs?error=This job is older than 2 days and is no longer open for advertiser applications.",
             status_code=303,
         )
     try:
-        _require_advertiser_fully_complete(db, user.id)
+        if not _is_admin_user(user):
+            _require_advertiser_fully_complete(db, user.id)
         payload = schemas.JobApplicationCreate(description=description)
     except ValidationError as exc:
         first_error = exc.errors()[0]["msg"] if exc.errors() else "Invalid application."
@@ -2312,7 +2379,7 @@ def ui_apply_job(
         description=payload.description.strip(),
     )
     try:
-        _charge_action_or_raise(db, user.id, COIN_ACTION_APPLY_JOB)
+        _charge_action_or_raise(db, user, COIN_ACTION_APPLY_JOB)
     except HTTPException as exc:
         return RedirectResponse(url=f"/jobs?error={exc.detail}", status_code=303)
     db.add(application)
@@ -2577,6 +2644,8 @@ def chat_demo(request: Request, db: Session = Depends(get_db)):
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
+    chat_user = _chat_user_query(db).filter(models.User.id == user.id).first() or user
+    current_chat_profile = _chat_display_for_user(chat_user).model_dump()
     access_token = auth.create_access_token(str(user.id))
     response = templates.TemplateResponse(
         request,
@@ -2584,7 +2653,7 @@ def chat_demo(request: Request, db: Session = Depends(get_db)):
         {
             "request": request,
             "user": user,
-            "display_name": user.email.split("@")[0],
+            "current_chat_profile": current_chat_profile,
             "initial_partner_id": request.query_params.get("user_id"),
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),

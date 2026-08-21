@@ -284,6 +284,10 @@
 
         }
 
+        const isAdmin = {{ 'true' if is_admin else 'false' }};
+
+        if (isAdmin) return;
+
         const cost = Number(form.dataset.cost || "0");
 
         if (!Number.isFinite(cost) || cost <= 0) return;

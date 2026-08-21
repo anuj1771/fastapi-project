@@ -119,7 +119,10 @@ class UserListItem(BaseModel):
 
 class RegisteredUserItem(BaseModel):
     id: int
-    email: EmailStr
+    has_company: bool = False
+    has_instagram: bool = False
+    company_name: Optional[str] = None
+    instagram_id: Optional[str] = None
 
 
 class BasicProfileUpsert(BaseModel):
