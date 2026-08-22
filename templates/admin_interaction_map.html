@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin - User Interaction Map</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"></script>
+  <style>
+    .map-canvas { height: 620px; background: #f8fafc; }
+    .cy-selected-glow { box-shadow: 0 0 0 4px rgba(14, 140, 228, 0.25); }
+    .combo-list { max-height: 280px; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <main class="max-w-7xl mx-auto px-6 py-10">
+    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
+      <span class="text-sm text-gray-700 font-medium">AffeeSo Admin</span>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
+        <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
+      </div>
+    </div>
+
+    <section class="bg-white rounded-xl shadow p-6">
+      <h1 class="text-2xl font-bold">User Interaction Map</h1>
+      <p class="text-sm text-gray-600 mt-1 mb-5">
+        Select a user to view their conversation relationships. The map uses the same chat rules as the product:
+        selected job applications and existing conversations. Only direct connections are shown.
+      </p>
+
+      <label class="block text-sm font-semibold text-slate-700 mb-2">Select user</label>
+      <div class="relative mb-6" id="userCombo">
+        <input id="userSearch" type="text" autocomplete="off"
+          placeholder="Search users by name, Instagram, company, or email..."
+          class="w-full border border-slate-300 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400" />
+        <div id="userList" class="combo-list absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-y-auto hidden"></div>
+      </div>
+
+      <div id="loadError" class="hidden mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm"></div>
+
+      <div id="mapWrap" class="hidden grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="text-sm font-semibold tracking-wide text-slate-500">USER RELATIONSHIP MAP</h2>
+            <div class="flex flex-wrap gap-2 text-[11px] text-slate-600">
+              <span class="inline-flex items-center gap-1"><span class="w-6 h-0.5 bg-emerald-500 inline-block"></span> Outgoing</span>
+              <span class="inline-flex items-center gap-1"><span class="w-6 h-0.5 bg-sky-500 inline-block"></span> Incoming</span>
+              <span class="inline-flex items-center gap-1"><span class="w-6 h-0.5 bg-violet-500 inline-block"></span> Two-way</span>
+              <span class="inline-flex items-center gap-1"><span class="w-6 border-t border-dashed border-amber-500 inline-block"></span> Pending</span>
+            </div>
+          </div>
+          <div id="cy" class="map-canvas border border-slate-200 rounded-xl"></div>
+          <p class="text-xs text-slate-500 mt-2">Click a connected user to see relationship details. Use “Focus map” to load that user’s direct connections.</p>
+        </div>
+        <aside>
+          <div id="summaryCard" class="border border-slate-200 rounded-xl p-4 bg-slate-50"></div>
+          <div id="detailCard" class="mt-4 border border-slate-200 rounded-xl p-4 hidden"></div>
+        </aside>
+      </div>
+
+      <div id="emptyHint" class="text-sm text-slate-500">Search and select a user to generate their relationship map from the database.</div>
+    </section>
+  </main>
+
+  <script>
+    const userSearch = document.getElementById("userSearch");
+    const userList = document.getElementById("userList");
+    const mapWrap = document.getElementById("mapWrap");
+    const emptyHint = document.getElementById("emptyHint");
+    const loadError = document.getElementById("loadError");
+    const summaryCard = document.getElementById("summaryCard");
+    const detailCard = document.getElementById("detailCard");
+
+    let users = [];
+    let cy = null;
+    let currentMap = null;
+
+    function escapeHtml(text) {
+      return String(text ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function formatWhen(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "—";
+      return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    }
+
+    function userSearchText(user) {
+      return [
+        user.display_name,
+        user.company_name,
+        user.instagram_id,
+        user.email,
+        String(user.id),
+      ].filter(Boolean).join(" ").toLowerCase();
+    }
+
+    function renderUserList(query) {
+      const q = (query || "").trim().toLowerCase();
+      const matches = users.filter((u) => userSearchText(u).includes(q)).slice(0, 40);
+      if (!matches.length) {
+        userList.innerHTML = '<div class="px-3 py-3 text-sm text-slate-500">No users found</div>';
+        userList.classList.remove("hidden");
+        return;
+      }
+      userList.innerHTML = matches.map((u) => `
+        <button type="button" class="w-full text-left px-3 py-2 hover:bg-sky-50 border-b border-slate-100 last:border-0" data-id="${u.id}">
+          <div class="text-sm font-medium text-slate-800">👤 ${escapeHtml(u.display_name)}</div>
+          <div class="text-xs text-slate-500">Can chat with ${u.contact_count} user${u.contact_count === 1 ? "" : "s"}${u.email ? " · " + escapeHtml(u.email) : ""}</div>
+        </button>
+      `).join("");
+      userList.classList.remove("hidden");
+      userList.querySelectorAll("button").forEach((btn) => {
+        btn.addEventListener("click", () => selectUser(Number(btn.getAttribute("data-id"))));
+      });
+    }
+
+    async function loadUsers() {
+      const res = await fetch("/admin/interaction-map/users");
+      if (!res.ok) {
+        loadError.textContent = "Could not load users. Admin access is required.";
+        loadError.classList.remove("hidden");
+        return;
+      }
+      users = await res.json();
+    }
+
+    function directionLabel(row, selectedName) {
+      if (row.direction === "bidirectional") {
+        return `${selectedName} ↔ ${row.user.display_name}`;
+      }
+      if (row.direction === "incoming") {
+        return `${row.user.display_name} → ${selectedName}`;
+      }
+      return `${selectedName} → ${row.user.display_name}`;
+    }
+
+    function renderSummary(map) {
+      const s = map.summary;
+      summaryCard.innerHTML = `
+        <h3 class="font-semibold text-slate-800">${escapeHtml(map.selected_user.display_name)}</h3>
+        <p class="text-xs text-slate-500 mt-1 mb-3">Can chat with <strong>${map.selected_user.contact_count}</strong> user${map.selected_user.contact_count === 1 ? "" : "s"}</p>
+        <dl class="text-sm space-y-2">
+          <div class="flex justify-between"><dt class="text-slate-500">Can contact</dt><dd class="font-semibold">${s.can_contact}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Can be contacted by</dt><dd class="font-semibold">${s.can_be_contacted_by}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Two-way connections</dt><dd class="font-semibold">${s.two_way}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Blocked connections</dt><dd class="font-semibold">${s.blocked}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Pending review</dt><dd class="font-semibold">${s.pending}</dd></div>
+        </dl>
+      `;
+    }
+
+    function renderDetails(row, selectedName) {
+      detailCard.classList.remove("hidden");
+      detailCard.innerHTML = `
+        <h3 class="font-semibold text-slate-800 text-sm">${escapeHtml(directionLabel(row, selectedName))}</h3>
+        <dl class="mt-3 text-sm space-y-2">
+          <div class="flex justify-between gap-3"><dt class="text-slate-500">Status</dt><dd class="font-medium capitalize">${escapeHtml(row.status)}</dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-slate-500">Direction</dt><dd class="font-medium text-right">${escapeHtml(directionLabel(row, selectedName))}</dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-slate-500">Created</dt><dd>${escapeHtml(formatWhen(row.created_at))}</dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-slate-500">Updated</dt><dd>${escapeHtml(formatWhen(row.updated_at))}</dd></div>
+        </dl>
+        <p class="mt-3 text-xs text-slate-600">${escapeHtml(row.note || "")}</p>
+        <p class="mt-2 text-[11px] text-slate-500">Chat permission follows existing job selection and conversation rules. There is no separate override list.</p>
+        <button type="button" id="focusUserBtn" class="mt-3 w-full text-sm bg-slate-800 text-white rounded-lg px-3 py-2">Focus map on this user</button>
+      `;
+      document.getElementById("focusUserBtn").addEventListener("click", () => selectUser(row.user.id));
+    }
+
+    function nodeLabel(name, count, extra) {
+      const lines = [name, `Can chat with ${count}`, extra].filter(Boolean);
+      return lines.join("\n");
+    }
+
+    function drawMap(map) {
+      const selectedId = String(map.selected_user.id);
+      const elements = [{
+        data: {
+          id: selectedId,
+          label: nodeLabel(map.selected_user.display_name, map.selected_user.contact_count, "SELECTED"),
+          kind: "selected",
+        },
+      }];
+
+      map.connections.forEach((row) => {
+        const otherId = String(row.user.id);
+        elements.push({
+          data: {
+            id: otherId,
+            label: nodeLabel(row.user.display_name, row.user.contact_count, row.status === "allowed" ? "Allowed" : "Pending"),
+            kind: row.status === "pending" ? "pending" : "connected",
+            connection: row,
+          },
+        });
+        const edgeId = `${selectedId}-${otherId}`;
+        const source = row.direction === "incoming" ? otherId : selectedId;
+        const target = row.direction === "incoming" ? selectedId : otherId;
+        elements.push({
+          data: {
+            id: edgeId,
+            source,
+            target,
+            status: row.status,
+            direction: row.direction,
+          },
+        });
+      });
+
+      if (cy) {
+        cy.destroy();
+      }
+      cy = cytoscape({
+        container: document.getElementById("cy"),
+        elements,
+        layout: {
+          name: "concentric",
+          minNodeSpacing: 80,
+          concentric: (node) => (node.data("kind") === "selected" ? 10 : 1),
+          levelWidth: () => 1,
+        },
+        style: [
+          {
+            selector: "node",
+            style: {
+              label: "data(label)",
+              "text-wrap": "wrap",
+              "text-max-width": 140,
+              "text-valign": "center",
+              "text-halign": "center",
+              "font-size": 11,
+              "font-weight": 600,
+              color: "#0f172a",
+              width: 150,
+              height: 78,
+              shape: "roundrectangle",
+              "background-color": "#ffffff",
+              "border-width": 2,
+              "border-color": "#cbd5e1",
+              "text-margin-y": 0,
+            },
+          },
+          {
+            selector: 'node[kind = "selected"]',
+            style: {
+              "background-color": "#0e8ce4",
+              color: "#ffffff",
+              "border-color": "#0369a1",
+              "border-width": 4,
+              width: 170,
+              height: 92,
+              "font-size": 12,
+            },
+          },
+          {
+            selector: 'node[kind = "pending"]',
+            style: {
+              "background-color": "#fffbeb",
+              "border-color": "#d97706",
+            },
+          },
+          {
+            selector: "edge",
+            style: {
+              width: 3,
+              "curve-style": "bezier",
+              "target-arrow-shape": "triangle",
+              "line-color": "#10b981",
+              "target-arrow-color": "#10b981",
+            },
+          },
+          {
+            selector: 'edge[direction = "incoming"]',
+            style: {
+              "line-color": "#0ea5e9",
+              "target-arrow-color": "#0ea5e9",
+            },
+          },
+          {
+            selector: 'edge[direction = "bidirectional"]',
+            style: {
+              "source-arrow-shape": "triangle",
+              "source-arrow-color": "#7c3aed",
+              "target-arrow-color": "#7c3aed",
+              "line-color": "#7c3aed",
+            },
+          },
+          {
+            selector: 'edge[status = "pending"]',
+            style: {
+              "line-style": "dashed",
+              "line-color": "#f59e0b",
+              "target-arrow-color": "#f59e0b",
+              "source-arrow-color": "#f59e0b",
+            },
+          },
+        ],
+      });
+
+      cy.on("tap", "node", (evt) => {
+        const node = evt.target;
+        if (node.data("kind") === "selected") {
+          detailCard.classList.add("hidden");
+          return;
+        }
+        renderDetails(node.data("connection"), map.selected_user.display_name);
+      });
+    }
+
+    async function selectUser(userId) {
+      userList.classList.add("hidden");
+      const chosen = users.find((u) => u.id === userId);
+      userSearch.value = chosen ? chosen.display_name : `User ${userId}`;
+      loadError.classList.add("hidden");
+      const res = await fetch(`/admin/users/${userId}/interaction-map`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        loadError.textContent = body.detail || "Failed to load interaction map.";
+        loadError.classList.remove("hidden");
+        return;
+      }
+      currentMap = await res.json();
+      emptyHint.classList.add("hidden");
+      mapWrap.classList.remove("hidden");
+      detailCard.classList.add("hidden");
+      renderSummary(currentMap);
+      drawMap(currentMap);
+    }
+
+    userSearch.addEventListener("focus", () => renderUserList(userSearch.value));
+    userSearch.addEventListener("input", () => renderUserList(userSearch.value));
+    document.addEventListener("click", (event) => {
+      if (!document.getElementById("userCombo").contains(event.target)) {
+        userList.classList.add("hidden");
+      }
+    });
+
+    loadUsers();
+  </script>
+</body>
+</html>

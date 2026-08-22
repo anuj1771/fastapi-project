@@ -206,3 +206,38 @@ class JobApplicationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class InteractionUserRef(BaseModel):
+    id: int
+    display_name: str
+    company_name: Optional[str] = None
+    instagram_id: Optional[str] = None
+    email: Optional[EmailStr] = None
+    contact_count: int = 0
+
+
+class InteractionConnection(BaseModel):
+    user: InteractionUserRef
+    direction: str
+    status: str
+    can_selected_contact: bool
+    can_contact_selected: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    note: Optional[str] = None
+    related_jobs: list[str] = []
+
+
+class InteractionSummary(BaseModel):
+    can_contact: int = 0
+    can_be_contacted_by: int = 0
+    two_way: int = 0
+    blocked: int = 0
+    pending: int = 0
+
+
+class InteractionMapOut(BaseModel):
+    selected_user: InteractionUserRef
+    connections: list[InteractionConnection]
+    summary: InteractionSummary

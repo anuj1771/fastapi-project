@@ -682,6 +682,291 @@ def _chat_user_query(db: Session):
     )
 
 
+def _interaction_display_name(user: models.User) -> str:
+    item = _chat_display_for_user(user)
+    parts: list[str] = []
+    if item.has_company and item.company_name:
+        parts.append(item.company_name)
+    if item.has_instagram and item.instagram_id:
+        parts.append(item.instagram_id)
+    if parts:
+        return " · ".join(parts)
+    return f"User {user.id}"
+
+
+def _complete_profile_user_ids(db: Session, profile_type: models.ProfileType) -> set[int]:
+    rows = (
+        db.query(models.BasicProfile)
+        .filter(models.BasicProfile.profile_type == profile_type)
+        .all()
+    )
+    return {row.user_id for row in rows if _is_basic_profile_complete(row)}
+
+
+def _allowed_undirected_chat_pairs(db: Session) -> set[tuple[int, int]]:
+    """Undirected pairs that currently share chat permission (same source as _can_chat_by_job_rules)."""
+    pairs: set[tuple[int, int]] = set()
+    connections = db.query(
+        models.ChatConnection.user_one_id, models.ChatConnection.user_two_id
+    ).all()
+    for one_id, two_id in connections:
+        if one_id != two_id:
+            pairs.add(tuple(sorted((one_id, two_id))))
+
+    messages = db.query(models.Message.sender_id, models.Message.receiver_id).distinct().all()
+    for sender_id, receiver_id in messages:
+        if sender_id != receiver_id:
+            pairs.add(tuple(sorted((sender_id, receiver_id))))
+
+    brand_ids = _complete_profile_user_ids(db, models.ProfileType.BRAND)
+    advertiser_ids = _complete_profile_user_ids(db, models.ProfileType.ADVERTISER)
+    selected_apps = (
+        db.query(models.Job.brand_user_id, models.JobApplication.advertiser_user_id)
+        .join(models.Job, models.Job.id == models.JobApplication.job_id)
+        .filter(models.JobApplication.is_selected.is_(True))
+        .all()
+    )
+    for brand_id, advertiser_id in selected_apps:
+        if brand_id == advertiser_id:
+            continue
+        if brand_id in brand_ids and advertiser_id in advertiser_ids:
+            pairs.add(tuple(sorted((brand_id, advertiser_id))))
+    return pairs
+
+
+def _chat_degree_map(db: Session) -> dict[int, int]:
+    degrees: dict[int, int] = {}
+    for left_id, right_id in _allowed_undirected_chat_pairs(db):
+        degrees[left_id] = degrees.get(left_id, 0) + 1
+        degrees[right_id] = degrees.get(right_id, 0) + 1
+    return degrees
+
+
+def _interaction_user_ref(
+    user: models.User, contact_count: int, *, include_email: bool = False
+) -> schemas.InteractionUserRef:
+    display = _chat_display_for_user(user)
+    return schemas.InteractionUserRef(
+        id=user.id,
+        display_name=_interaction_display_name(user),
+        company_name=display.company_name,
+        instagram_id=display.instagram_id,
+        email=user.email if include_email else None,
+        contact_count=contact_count,
+    )
+
+
+def _pair_job_rows(db: Session, user_a_id: int, user_b_id: int):
+    return (
+        db.query(models.Job, models.JobApplication)
+        .join(models.JobApplication, models.JobApplication.job_id == models.Job.id)
+        .filter(
+            or_(
+                and_(
+                    models.Job.brand_user_id == user_a_id,
+                    models.JobApplication.advertiser_user_id == user_b_id,
+                ),
+                and_(
+                    models.Job.brand_user_id == user_b_id,
+                    models.JobApplication.advertiser_user_id == user_a_id,
+                ),
+            )
+        )
+        .all()
+    )
+
+
+def _pair_chat_connection(db: Session, user_a_id: int, user_b_id: int):
+    one_id, two_id = sorted((user_a_id, user_b_id))
+    return (
+        db.query(models.ChatConnection)
+        .filter(
+            models.ChatConnection.user_one_id == one_id,
+            models.ChatConnection.user_two_id == two_id,
+        )
+        .first()
+    )
+
+
+def _pair_message_bounds(db: Session, user_a_id: int, user_b_id: int):
+    return (
+        db.query(func.min(models.Message.created_at), func.max(models.Message.created_at))
+        .filter(
+            or_(
+                and_(
+                    models.Message.sender_id == user_a_id,
+                    models.Message.receiver_id == user_b_id,
+                ),
+                and_(
+                    models.Message.sender_id == user_b_id,
+                    models.Message.receiver_id == user_a_id,
+                ),
+            )
+        )
+        .first()
+    )
+
+
+def _build_interaction_connection(
+    db: Session,
+    selected_user: models.User,
+    other_user: models.User,
+    degrees: dict[int, int],
+) -> schemas.InteractionConnection | None:
+    can_out = _can_chat_by_job_rules(db, selected_user.id, other_user.id)
+    can_in = _can_chat_by_job_rules(db, other_user.id, selected_user.id)
+    job_rows = _pair_job_rows(db, selected_user.id, other_user.id)
+    pending_jobs = [job for job, application in job_rows if not application.is_selected]
+    selected_jobs = [job for job, application in job_rows if application.is_selected]
+
+    if can_out and can_in:
+        direction = "bidirectional"
+        status = "allowed"
+    elif can_out:
+        direction = "outgoing"
+        status = "allowed"
+    elif can_in:
+        direction = "incoming"
+        status = "allowed"
+    elif pending_jobs:
+        selected_is_advertiser = any(
+            job.brand_user_id == other_user.id for job in pending_jobs
+        )
+        selected_is_brand = any(job.brand_user_id == selected_user.id for job in pending_jobs)
+        if selected_is_advertiser and not selected_is_brand:
+            direction = "outgoing"
+        elif selected_is_brand and not selected_is_advertiser:
+            direction = "incoming"
+        else:
+            direction = "bidirectional"
+        status = "pending"
+    else:
+        return None
+
+    connection = _pair_chat_connection(db, selected_user.id, other_user.id)
+    first_at, last_at = _pair_message_bounds(db, selected_user.id, other_user.id)
+    timestamps = [
+        value
+        for value in (
+            connection.created_at if connection else None,
+            first_at,
+            last_at,
+            *(job.created_at for job, _application in job_rows),
+            *(application.created_at for _job, application in job_rows),
+            *(application.updated_at for _job, application in job_rows),
+        )
+        if value is not None
+    ]
+    related_jobs = [job.title for job, _application in job_rows]
+    if status == "allowed":
+        reasons = []
+        if connection or first_at:
+            reasons.append("Existing conversation")
+        if selected_jobs:
+            titles = ", ".join(job.title for job in selected_jobs)
+            reasons.append(f"Selected on job: {titles}")
+        note = ". ".join(reasons) if reasons else "Chat is allowed by current conversation rules."
+    else:
+        titles = ", ".join(job.title for job in pending_jobs)
+        note = f"Job application awaiting brand selection: {titles}"
+
+    return schemas.InteractionConnection(
+        user=_interaction_user_ref(other_user, degrees.get(other_user.id, 0)),
+        direction=direction,
+        status=status,
+        can_selected_contact=can_out,
+        can_contact_selected=can_in,
+        created_at=min(timestamps) if timestamps else None,
+        updated_at=max(timestamps) if timestamps else None,
+        note=note,
+        related_jobs=related_jobs,
+    )
+
+
+def _direct_relationship_partner_ids(db: Session, user_id: int) -> set[int]:
+    partner_ids: set[int] = set()
+    connections = (
+        db.query(models.ChatConnection.user_one_id, models.ChatConnection.user_two_id)
+        .filter(
+            or_(
+                models.ChatConnection.user_one_id == user_id,
+                models.ChatConnection.user_two_id == user_id,
+            )
+        )
+        .all()
+    )
+    for one_id, two_id in connections:
+        partner_ids.add(two_id if one_id == user_id else one_id)
+
+    messages = (
+        db.query(models.Message.sender_id, models.Message.receiver_id)
+        .filter(
+            or_(models.Message.sender_id == user_id, models.Message.receiver_id == user_id)
+        )
+        .distinct()
+        .all()
+    )
+    for sender_id, receiver_id in messages:
+        partner_ids.add(receiver_id if sender_id == user_id else sender_id)
+
+    job_pairs = (
+        db.query(models.Job.brand_user_id, models.JobApplication.advertiser_user_id)
+        .join(models.Job, models.Job.id == models.JobApplication.job_id)
+        .filter(
+            or_(
+                models.Job.brand_user_id == user_id,
+                models.JobApplication.advertiser_user_id == user_id,
+            )
+        )
+        .all()
+    )
+    for brand_id, advertiser_id in job_pairs:
+        partner_ids.add(advertiser_id if brand_id == user_id else brand_id)
+
+    partner_ids.discard(user_id)
+    return partner_ids
+
+
+def _build_interaction_map(db: Session, selected_user: models.User) -> schemas.InteractionMapOut:
+    degrees = _chat_degree_map(db)
+    partner_ids = _direct_relationship_partner_ids(db, selected_user.id)
+    partners = (
+        _chat_user_query(db)
+        .filter(
+            models.User.id.in_(partner_ids),
+            models.User.role != models.UserRole.ADMIN,
+        )
+        .all()
+        if partner_ids
+        else []
+    )
+    connections: list[schemas.InteractionConnection] = []
+    for partner in partners:
+        item = _build_interaction_connection(db, selected_user, partner, degrees)
+        if item:
+            connections.append(item)
+    connections.sort(key=lambda row: row.user.display_name.lower())
+
+    summary = schemas.InteractionSummary(
+        can_contact=sum(1 for row in connections if row.can_selected_contact),
+        can_be_contacted_by=sum(1 for row in connections if row.can_contact_selected),
+        two_way=sum(
+            1
+            for row in connections
+            if row.can_selected_contact and row.can_contact_selected
+        ),
+        blocked=0,
+        pending=sum(1 for row in connections if row.status == "pending"),
+    )
+    return schemas.InteractionMapOut(
+        selected_user=_interaction_user_ref(
+            selected_user, degrees.get(selected_user.id, 0), include_email=True
+        ),
+        connections=connections,
+        summary=summary,
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 def landing(request: Request, db: Session = Depends(get_db)):
     _ensure_default_coin_cost_settings(db)
@@ -931,6 +1216,53 @@ def admin_stats(_: models.User = Depends(require_admin), db: Session = Depends(g
         total_brands=total_brands,
         templates_sent=templates_sent,
         total_messages=total_messages,
+    )
+
+
+@app.get("/admin/interaction-map/users", response_model=list[schemas.InteractionUserRef])
+def admin_interaction_map_users(
+    _: models.User = Depends(require_admin), db: Session = Depends(get_db)
+):
+    degrees = _chat_degree_map(db)
+    users = (
+        _chat_user_query(db)
+        .filter(models.User.role != models.UserRole.ADMIN)
+        .order_by(models.User.id.asc())
+        .all()
+    )
+    return [
+        _interaction_user_ref(user, degrees.get(user.id, 0), include_email=True)
+        for user in users
+    ]
+
+
+@app.get("/admin/users/{user_id}/interaction-map", response_model=schemas.InteractionMapOut)
+def admin_user_interaction_map(
+    user_id: int,
+    _: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    selected_user = _chat_user_query(db).filter(models.User.id == user_id).first()
+    if not selected_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if selected_user.role == models.UserRole.ADMIN:
+        raise HTTPException(status_code=400, detail="Select a non-admin user")
+    return _build_interaction_map(db, selected_user)
+
+
+@app.get("/admin/interaction-map", response_class=HTMLResponse)
+def admin_interaction_map_page(request: Request, db: Session = Depends(get_db)):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "admin_interaction_map.html",
+        {
+            "request": request,
+            "user": admin_user,
+            "display_name": admin_user.email.split("@")[0],
+        },
     )
 
 
