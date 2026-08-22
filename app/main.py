@@ -650,20 +650,27 @@ def _normalize_instagram_handle(value: str | None) -> str:
     return cleaned
 
 
+def _display_instagram_id(value: str | None) -> str | None:
+    handle = _normalize_instagram_handle(value)
+    if not handle:
+        return None
+    return f"@{handle}"
+
+
 def _chat_display_for_user(user: models.User) -> schemas.RegisteredUserItem:
     profile_types = {row.profile_type for row in (user.basic_profiles or [])}
     ad_detail = user.advertiser_profile_detail
     brand_detail = user.brand_profile_detail
     has_instagram = models.ProfileType.ADVERTISER in profile_types or ad_detail is not None
     has_company = models.ProfileType.BRAND in profile_types or brand_detail is not None
-    instagram_id = _normalize_instagram_handle(ad_detail.instagram_id if ad_detail else None)
+    instagram_id = _display_instagram_id(ad_detail.instagram_id if ad_detail else None)
     company_name = (brand_detail.brand_name or "").strip() if brand_detail else ""
     return schemas.RegisteredUserItem(
         id=user.id,
         has_company=has_company,
         has_instagram=has_instagram,
         company_name=company_name or None,
-        instagram_id=instagram_id or None,
+        instagram_id=instagram_id,
     )
 
 
