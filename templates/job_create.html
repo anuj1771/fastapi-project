@@ -1,114 +1,319 @@
 <!DOCTYPE html>
+
 <html lang="en">
+
 <head>
+
   <meta charset="UTF-8" />
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Create Job - BrandBridge</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+
+  <title>Create Job - AffeeSo</title>
+
 </head>
-<body class="bg-slate-100 min-h-screen">
-  <main class="max-w-4xl mx-auto px-6 py-10">
-    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
-      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
-      <div class="flex items-center gap-3">
-        {% if user.role.value != 'admin' %}
-          <span class="text-sm font-semibold text-amber-700">🪙 {{ user.coins }}</span>
-          <details class="relative">
-            <summary class="list-none cursor-pointer text-sm bg-amber-500 text-white px-3 py-1 rounded">Get more coins</summary>
-            <div class="absolute right-0 mt-2 w-56 bg-white border rounded shadow p-3 z-10">
-              <form action="/ui/coins/earn" method="post" class="space-y-2">
-                <input type="hidden" name="next_path" value="{{ request.url.path }}" />
-                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="20">Get 20 coins</button>
-                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="40">Get 40 coins</button>
-                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="70">Get 70 coins</button>
-              </form>
+
+<body class="affeeso-body">
+
+  {% include 'partials/site_header.html' %}
+
+  <main class="affeeso-main">
+
+    <div class="affeeso-container">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+
+        <h1 class="affeeso-page-title" style="margin:0;">Create a job</h1>
+
+        <a href="/dashboard" class="affeeso-btn affeeso-btn-outline">Dashboard</a>
+
+      </div>
+
+
+
+      {% if success %}
+
+        <div class="affeeso-alert affeeso-alert-success">{{ success }}</div>
+
+      {% endif %}
+
+      {% if error %}
+
+        <div class="affeeso-alert affeeso-alert-error">{{ error }}</div>
+
+      {% endif %}
+
+
+
+      <section class="affeeso-card">
+
+        <div class="affeeso-profile-panel__head" style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border);">
+
+          <h2 class="affeeso-profile-panel__title">Job details</h2>
+
+          {% if coin_costs.create_job_cost %}
+
+            <span class="affeeso-coins">Costs {{ coin_costs.create_job_cost }} coins</span>
+
+          {% endif %}
+
+        </div>
+
+
+
+        <form action="/ui/jobs/create" method="post" class="js-paid-action" data-cost="{{ coin_costs.create_job_cost or 0 }}" data-action-label="Create Job">
+
+          <div class="affeeso-form-section">
+
+            <h3 class="affeeso-form-section__title">Campaign</h3>
+
+            <div class="affeeso-form-stack">
+
+              <div class="affeeso-field">
+
+                <label for="job-title">Campaign title</label>
+
+                <input class="affeeso-input" id="job-title" name="title" type="text" placeholder="e.g. Summer Collection Push" required />
+
+              </div>
+
+              <div class="affeeso-field">
+
+                <label for="job-promotion">Promotion requirement</label>
+
+                <textarea class="affeeso-input" id="job-promotion" name="promotion_requirement" placeholder="What promotion do you want? Include deliverables and campaign goal." required></textarea>
+
+              </div>
+
+              <div class="affeeso-field">
+
+                <label for="job-budget">Budget</label>
+
+                <input class="affeeso-input" id="job-budget" name="budget" type="text" placeholder="e.g. INR 20,000 - 30,000" required />
+
+              </div>
+
             </div>
-          </details>
-        {% endif %}
-        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
-        <form action="/ui/logout" method="post">
-          <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
+
+          </div>
+
+
+
+          <div class="affeeso-form-section">
+
+            <h3 class="affeeso-form-section__title">Targeting</h3>
+
+            <div class="affeeso-form-stack">
+
+              <div class="affeeso-field">
+
+                <label for="target-profile-tags">Target Instagram profiles</label>
+
+                <p class="affeeso-hint" style="margin:0 0 8px;">Type to search, then click a tag to add. Press × on a tag to remove it.</p>
+
+                <div
+
+                  id="target-profile-tags"
+
+                  class="affeeso-m2m-tags"
+
+                  data-name="target_profile_tag_ids"
+
+                  data-placeholder="Search target profile tags..."
+
+                  data-tags='{{ target_profile_tags_json | safe }}'
+
+                ></div>
+
+              </div>
+
+              <div class="affeeso-field">
+
+                <label for="promotion-tags">Promotion tags</label>
+
+                <p class="affeeso-hint" style="margin:0 0 8px;">Type to search, then click a tag to add. Press × on a tag to remove it.</p>
+
+                <div
+
+                  id="promotion-tags"
+
+                  class="affeeso-m2m-tags"
+
+                  data-name="promotion_tag_ids"
+
+                  data-placeholder="Search promotion tags..."
+
+                  data-tags='{{ promotion_tags_json | safe }}'
+
+                ></div>
+
+              </div>
+
+            </div>
+
+          </div>
+
+
+
+          <div class="affeeso-form-section">
+
+            <h3 class="affeeso-form-section__title">Optional</h3>
+
+            <div class="affeeso-form-stack">
+
+              <div class="affeeso-field">
+
+                <label for="job-image">Brand profile image URL</label>
+
+                <input class="affeeso-input" id="job-image" name="profile_image_url" type="url" placeholder="https://..." />
+
+              </div>
+
+            </div>
+
+          </div>
+
+
+
+          <div class="affeeso-form-actions">
+
+            <button type="submit" class="affeeso-btn affeeso-btn-primary">Post job</button>
+
+          </div>
+
         </form>
-      </div>
+
+
+
+        <p class="affeeso-hint">Tags are managed by admin. New tags appear here as soon as they are created.</p>
+
+      </section>
+
     </div>
 
-    <div class="flex items-center justify-between mb-4">
-      <h1 class="text-2xl font-bold">Create a Job</h1>
-      <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
-    </div>
-
-    {% if success %}
-      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
-    {% endif %}
-    {% if error %}
-      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
-    {% endif %}
-
-    <section class="bg-white rounded-xl shadow p-6">
-      <form action="/ui/jobs/create" method="post" class="space-y-4 js-paid-action" data-cost="{{ coin_costs.create_job_cost or 0 }}" data-action-label="Create Job">
-        <input class="w-full border rounded p-2" name="title" type="text" placeholder="Campaign title (e.g. Summer Collection Push)" required />
-        <textarea class="w-full border rounded p-2 min-h-24" name="promotion_requirement" placeholder="What promotion do you want? Include deliverables and campaign goal." required></textarea>
-        <input class="w-full border rounded p-2" name="budget" type="text" placeholder="Budget (e.g. INR 20,000 - 30,000)" required />
-        <textarea class="w-full border rounded p-2 min-h-24" name="target_instagram_profiles" placeholder="What kind of Instagram profiles do you want (niche, followers range, location, audience)?" required></textarea>
-        <input class="w-full border rounded p-2" name="promotion_tags" type="text" placeholder="Tags: story promotion, reel, image post, collaboration" required />
-        <input class="w-full border rounded p-2" name="profile_image_url" type="url" placeholder="Optional brand profile image URL" />
-        <button class="w-full bg-indigo-600 text-white py-2 rounded">Post Job</button>
-      </form>
-      <p class="text-xs text-gray-500 mt-3">Use clear tags like story promotion, reel, image post, collaboration so advertisers can quickly match.</p>
-    </section>
   </main>
-  <div id="coinModal" class="fixed inset-0 hidden items-center justify-center bg-slate-900/50 px-4">
-    <div class="w-full max-w-md rounded-xl bg-white shadow-xl border border-slate-200">
-      <div class="px-6 pt-6 pb-3 text-center">
-        <h3 id="coinModalTitle" class="text-lg font-semibold text-slate-900">Popup title</h3>
-        <p id="coinModalText" class="mt-2 text-sm text-slate-600">This action will cost coins.</p>
+
+
+
+  <div id="coinModal" class="affeeso-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="coinModalTitle">
+
+    <div class="affeeso-modal">
+
+      <div class="affeeso-modal__body">
+
+        <h3 id="coinModalTitle" class="affeeso-modal__title">Confirm action</h3>
+
+        <p id="coinModalText" class="affeeso-modal__text">This action will cost coins.</p>
+
       </div>
-      <div class="px-6 pb-6 flex gap-3 justify-center">
-        <button id="coinModalCancel" type="button" class="w-32 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Close</button>
-        <button id="coinModalOk" type="button" class="w-32 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">Ok</button>
+
+      <div class="affeeso-modal__actions">
+
+        <button id="coinModalCancel" type="button" class="affeeso-btn affeeso-btn-outline">Close</button>
+
+        <button id="coinModalOk" type="button" class="affeeso-btn affeeso-btn-primary">Ok</button>
+
       </div>
+
     </div>
+
   </div>
+
+
+
+  <script src="/static/js/m2m-tags.js"></script>
+
   <script>
+
     const coinModal = document.getElementById("coinModal");
+
     const coinModalTitle = document.getElementById("coinModalTitle");
+
     const coinModalText = document.getElementById("coinModalText");
+
     const coinModalCancel = document.getElementById("coinModalCancel");
+
     const coinModalOk = document.getElementById("coinModalOk");
 
+
+
     function openCoinModal({ title, text, onOk }) {
+
       coinModalTitle.textContent = title || "Confirm";
+
       coinModalText.textContent = text || "";
-      coinModal.classList.remove("hidden");
-      coinModal.classList.add("flex");
+
+      coinModal.classList.add("is-open");
+
+
 
       const cleanup = () => {
-        coinModal.classList.add("hidden");
-        coinModal.classList.remove("flex");
+
+        coinModal.classList.remove("is-open");
+
         coinModalOk.onclick = null;
+
         coinModalCancel.onclick = null;
+
       };
+
+
 
       coinModalCancel.onclick = () => cleanup();
+
       coinModalOk.onclick = () => {
+
         cleanup();
+
         onOk && onOk();
+
       };
+
     }
 
+
+
     document.querySelectorAll(".js-paid-action").forEach((form) => {
+
       form.addEventListener("submit", (e) => {
+
+        if (!window.AffeeSoM2MTags.validateForm(form)) {
+
+          e.preventDefault();
+
+          return;
+
+        }
+
+        const isAdmin = {{ 'true' if is_admin else 'false' }};
+
+        if (isAdmin) return;
+
         const cost = Number(form.dataset.cost || "0");
+
         if (!Number.isFinite(cost) || cost <= 0) return;
+
         e.preventDefault();
+
         const label = form.dataset.actionLabel || "This action";
+
         openCoinModal({
-          title: "Popup title",
+
+          title: "Confirm coin charge",
+
           text: `${label} will cost ${cost} coins. Do you want to continue?`,
+
           onOk: () => form.submit(),
+
         });
+
       });
+
     });
+
   </script>
+
 </body>
+
 </html>
+
+

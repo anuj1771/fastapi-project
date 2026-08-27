@@ -3,89 +3,59 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BrandBridge</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>AffeeSo</title>
 </head>
-<body class="bg-gray-100 min-h-screen">
-  <main class="max-w-5xl mx-auto px-6 py-10">
-    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
-      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
+<body class="affeeso-body">
+  {% set show_nav = false %}
+  {% set display_name = display_name|default(user.email.split('@')[0] if user else 'Guest') %}
+  {% include 'partials/site_header.html' %}
+
+  <main class="affeeso-main">
+    <div class="affeeso-container">
+      <h1 class="affeeso-page-title">Welcome to AffeeSo</h1>
+      <p style="color:var(--text-muted);margin:-12px 0 24px;font-size:15px;">Collaboration platform for advertisers and brands.</p>
+
+      {% if success %}
+        <div class="affeeso-alert affeeso-alert-success">{{ success }}</div>
+      {% endif %}
+      {% if error %}
+        <div class="affeeso-alert affeeso-alert-error">{{ error }}</div>
+      {% endif %}
+
       {% if user %}
-        <div class="flex items-center gap-3">
-          {% if user.role.value != 'admin' %}
-            <span class="text-sm font-semibold text-amber-700">🪙 {{ user.coins }}</span>
-            <details class="relative">
-              <summary class="list-none cursor-pointer text-sm bg-amber-500 text-white px-3 py-1 rounded">Get more coins</summary>
-              <div class="absolute right-0 mt-2 w-56 bg-white border rounded shadow p-3 z-10">
-                <form action="/ui/coins/earn" method="post" class="space-y-2">
-                  <input type="hidden" name="next_path" value="{{ request.url.path }}" />
-                  <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="20">Get 20 coins</button>
-                  <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="40">Get 40 coins</button>
-                  <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="70">Get 70 coins</button>
-                </form>
-              </div>
-            </details>
-          {% endif %}
-          <a href="/profile" title="Profile" class="w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center text-sm font-semibold">P</a>
-          <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
-          <form action="/ui/logout" method="post">
-            <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
-          </form>
+        <div class="affeeso-card">
+          <h2 class="affeeso-card-title">You are already logged in</h2>
+          <p class="affeeso-hint" style="margin-bottom:16px;">Continue to your dashboard or sign out.</p>
+          <div class="affeeso-actions">
+            <a href="/dashboard" class="affeeso-btn affeeso-btn-primary">Go to dashboard</a>
+            <form action="/ui/logout" method="post" style="margin:0;">
+              <button type="submit" class="affeeso-btn affeeso-btn-danger">Logout</button>
+            </form>
+          </div>
         </div>
       {% else %}
-        <span class="text-sm text-gray-500">Not logged in</span>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;">
+          <section class="affeeso-card">
+            <h2 class="affeeso-card-title">Register</h2>
+            <form action="/ui/register" method="post" style="display:flex;flex-direction:column;gap:12px;">
+              <input class="affeeso-input" name="email" type="email" placeholder="email@example.com" required />
+              <input class="affeeso-input" name="password" type="password" placeholder="Password (min 6 characters)" required />
+              <button type="submit" class="affeeso-btn affeeso-btn-primary" style="width:100%;padding:12px;">Create account</button>
+            </form>
+            <p class="affeeso-hint">Tip: emails ending with @admin.com become admin users.</p>
+          </section>
+          <section class="affeeso-card">
+            <h2 class="affeeso-card-title">Login</h2>
+            <form action="/ui/login" method="post" style="display:flex;flex-direction:column;gap:12px;">
+              <input class="affeeso-input" name="email" type="email" placeholder="email@example.com" required />
+              <input class="affeeso-input" name="password" type="password" placeholder="Password" required />
+              <button type="submit" class="affeeso-btn affeeso-btn-action affeeso-btn-action--success" style="width:100%;padding:12px;">Login</button>
+            </form>
+            <a href="/forgot-password" style="display:inline-block;margin-top:12px;font-size:14px;color:var(--primary);">Forgot password?</a>
+          </section>
+        </div>
       {% endif %}
     </div>
-
-    <h1 class="text-3xl font-bold mb-2">BrandBridge</h1>
-    <p class="text-gray-600 mb-8">Collaboration platform for Advertisers and Brands.</p>
-
-    {% if success %}
-      <div class="mb-6 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">
-        {{ success }}
-      </div>
-    {% endif %}
-    {% if error %}
-      <div class="mb-6 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">
-        {{ error }}
-      </div>
-    {% endif %}
-
-    {% if user %}
-      <section class="bg-white rounded-xl shadow p-6">
-        <h2 class="text-xl font-semibold mb-2">You are already logged in</h2>
-        <p class="text-gray-600 mb-4">Continue to your dashboard or logout from your account.</p>
-        <div class="flex items-center gap-3">
-          <a href="/dashboard" class="inline-block bg-blue-600 text-white px-4 py-2 rounded text-sm">Go to Dashboard</a>
-          <form action="/ui/logout" method="post">
-            <button type="submit" class="bg-red-600 text-white px-4 py-2 rounded text-sm">Logout</button>
-          </form>
-        </div>
-      </section>
-    {% else %}
-      <div class="grid md:grid-cols-2 gap-6">
-        <section class="bg-white rounded-xl shadow p-6">
-          <h2 class="text-xl font-semibold mb-4">Register</h2>
-          <form action="/ui/register" method="post" class="space-y-3">
-            <input class="w-full border rounded p-2" name="email" type="email" placeholder="email@example.com" required />
-            <input class="w-full border rounded p-2" name="password" type="password" placeholder="password" required />
-            <button class="w-full bg-blue-600 text-white py-2 rounded">Create Account</button>
-          </form>
-          <p class="text-xs text-gray-500 mt-3">Tip: emails ending with @admin.com become Admin users.</p>
-        </section>
-
-        <section class="bg-white rounded-xl shadow p-6">
-          <h2 class="text-xl font-semibold mb-4">Login</h2>
-          <form action="/ui/login" method="post" class="space-y-3">
-            <input class="w-full border rounded p-2" name="email" type="email" placeholder="email@example.com" required />
-            <input class="w-full border rounded p-2" name="password" type="password" placeholder="password" required />
-            <button class="w-full bg-emerald-600 text-white py-2 rounded">Login</button>
-          </form>
-          <a href="/forgot-password" class="inline-block mt-3 text-sm text-blue-700">Forgot password?</a>
-          <a href="/dashboard" class="inline-block mt-4 text-blue-700 text-sm">Go to dashboard</a>
-        </section>
-      </div>
-    {% endif %}
   </main>
 </body>
 </html>

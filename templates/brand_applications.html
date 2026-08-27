@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Applicants - BrandBridge</title>
+  <title>Applicants - AffeeSo</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-100 min-h-screen">
   <main class="max-w-6xl mx-auto px-6 py-10">
     <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
-      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
+      <span class="text-sm text-gray-700 font-medium">AffeeSo</span>
       <div class="flex items-center gap-3">
         {% if user.role.value != 'admin' %}
           <span class="text-sm font-semibold text-amber-700">🪙 {{ user.coins }}</span>
@@ -49,7 +49,25 @@
         <section class="bg-white rounded-xl shadow p-6">
           <h2 class="text-lg font-semibold">{{ card.job.title }}</h2>
           <p class="text-sm text-gray-600 mt-1">{{ card.job.promotion_requirement }}</p>
-          <p class="text-xs text-gray-500 mt-1">Tags: {{ card.job.promotion_tags }} | Budget: {{ card.job.budget }}</p>
+          <p class="text-xs text-gray-500 mt-1">Budget: {{ card.job.budget }}</p>
+          <div class="mt-2 flex flex-wrap gap-2">
+            {% for tag in card.job.promotion_tag_items %}
+              <span class="text-xs px-2 py-1 rounded-full bg-sky-100 text-sky-800">{{ tag.name }}</span>
+            {% else %}
+              {% if card.job.promotion_tag_labels %}
+                <span class="text-xs text-gray-500">{{ card.job.promotion_tag_labels }}</span>
+              {% endif %}
+            {% endfor %}
+          </div>
+          <div class="mt-2 flex flex-wrap gap-2">
+            {% for tag in card.job.target_profile_tag_items %}
+              <span class="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-800">{{ tag.name }}</span>
+            {% else %}
+              {% if card.job.target_profile_labels %}
+                <span class="text-xs text-gray-500">{{ card.job.target_profile_labels }}</span>
+              {% endif %}
+            {% endfor %}
+          </div>
 
           <div class="mt-4 space-y-3">
             {% for application, advertiser in card.applications %}

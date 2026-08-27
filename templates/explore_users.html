@@ -3,48 +3,38 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ title }}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>{{ title }} - AffeeSo</title>
 </head>
-<body class="bg-slate-100 min-h-screen">
-  <main class="max-w-5xl mx-auto px-6 py-10">
-    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
-      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
-      <div class="flex items-center gap-3">
-        {% if user.role.value != 'admin' %}
-          <span class="text-sm font-semibold text-amber-700">🪙 {{ user.coins }}</span>
-          <details class="relative">
-            <summary class="list-none cursor-pointer text-sm bg-amber-500 text-white px-3 py-1 rounded">Get more coins</summary>
-            <div class="absolute right-0 mt-2 w-56 bg-white border rounded shadow p-3 z-10">
-              <form action="/ui/coins/earn" method="post" class="space-y-2">
-                <input type="hidden" name="next_path" value="{{ request.url.path }}" />
-                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="20">Get 20 coins</button>
-                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="40">Get 40 coins</button>
-                <button class="w-full bg-amber-100 text-amber-800 px-3 py-2 rounded text-sm" name="amount" value="70">Get 70 coins</button>
-              </form>
-            </div>
-          </details>
-        {% endif %}
-        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
-        <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
+<body class="affeeso-body">
+  {% include 'partials/site_header.html' %}
+  <main class="affeeso-main">
+    <div class="affeeso-container">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+        <h1 class="affeeso-page-title" style="margin:0;">{{ title }}</h1>
+        <a href="/dashboard" class="affeeso-btn affeeso-btn-outline">Dashboard</a>
       </div>
-    </div>
-
-    <h1 class="text-2xl font-bold mb-4">{{ title }}</h1>
     {% if success %}
-      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
+      <div class="affeeso-alert affeeso-alert-success">{{ success }}</div>
     {% endif %}
     {% if error %}
-      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
+      <div class="affeeso-alert affeeso-alert-error">{{ error }}</div>
     {% endif %}
 
     {% if items %}
       <div class="grid md:grid-cols-2 gap-4">
         {% for item in items %}
-          <section class="bg-white rounded-xl shadow p-4">
+          <section class="affeeso-card" style="padding:16px;">
             <p class="text-sm"><span class="font-semibold">Email:</span> {{ item.user.email }}</p>
             <p class="text-sm"><span class="font-semibold">Name:</span> {{ item.basic_profile.name if item.basic_profile else '-' }}</p>
             <p class="text-sm"><span class="font-semibold">Phone:</span> {{ item.basic_profile.phone_number if item.basic_profile else '-' }}</p>
+            {% if item.ad_detail and item.ad_detail.instagram_id %}
+              <p class="text-sm"><span class="font-semibold">Instagram:</span> @{{ item.ad_detail.instagram_id }}</p>
+              <p class="text-sm"><span class="font-semibold">Followers:</span> {{ item.ad_detail.instagram_followers or '-' }}</p>
+            {% endif %}
+            {% if item.brand_detail and item.brand_detail.brand_name %}
+              <p class="text-sm"><span class="font-semibold">Brand:</span> {{ item.brand_detail.brand_name }}</p>
+              <p class="text-sm"><span class="font-semibold">Website:</span> {{ item.brand_detail.website_url or '-' }}</p>
+            {% endif %}
             <div class="mt-3">
               {% if item.has_chat %}
                 <a href="/chat-demo?user_id={{ item.user.id }}" class="inline-block bg-blue-600 text-white px-3 py-2 rounded text-sm">Chat</a>
@@ -58,8 +48,9 @@
         {% endfor %}
       </div>
     {% else %}
-      <div class="bg-white rounded-xl shadow p-5 text-sm text-gray-600">{{ empty_message }}</div>
+      <div class="affeeso-card" style="color:var(--text-muted);">{{ empty_message }}</div>
     {% endif %}
+    </div>
   </main>
   <div id="coinModal" class="fixed inset-0 hidden items-center justify-center bg-slate-900/50 px-4">
     <div class="w-full max-w-md rounded-xl bg-white shadow-xl border border-slate-200">
@@ -102,6 +93,8 @@
 
     document.querySelectorAll(".js-paid-action").forEach((form) => {
       form.addEventListener("submit", (e) => {
+        const isAdmin = {{ 'true' if is_admin else 'false' }};
+        if (isAdmin) return;
         const cost = Number(form.dataset.cost || "0");
         if (!Number.isFinite(cost) || cost <= 0) return;
         e.preventDefault();
