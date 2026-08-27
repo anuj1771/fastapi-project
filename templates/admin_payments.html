@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin - UPI Payments</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <main class="max-w-6xl mx-auto px-6 py-10">
+    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
+      <span class="text-sm text-gray-700 font-medium">AffeeSo Admin</span>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
+        <a href="/admin/coin-costs" class="text-sm text-blue-700">Coin packages</a>
+        <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
+        <form action="/ui/logout" method="post">
+          <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
+        </form>
+      </div>
+    </div>
+
+    <h1 class="text-2xl font-bold mb-2">UPI Payments</h1>
+    <p class="text-sm text-gray-600 mb-4">Verify a payment only after you confirm the UPI transfer in your bank or UPI app. Clicking verify credits coins once. Do not verify twice.</p>
+
+    {% if success %}
+      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
+    {% endif %}
+    {% if error %}
+      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
+    {% endif %}
+
+    <div class="mb-4 flex gap-2 text-sm">
+      <a class="px-3 py-1 rounded {% if not status_filter %}bg-slate-800 text-white{% else %}bg-white border{% endif %}" href="/admin/upi-payments">All</a>
+      <a class="px-3 py-1 rounded {% if status_filter == 'PENDING' %}bg-slate-800 text-white{% else %}bg-white border{% endif %}" href="/admin/upi-payments?status=PENDING">Pending</a>
+      <a class="px-3 py-1 rounded {% if status_filter == 'PAID' %}bg-slate-800 text-white{% else %}bg-white border{% endif %}" href="/admin/upi-payments?status=PAID">Paid</a>
+      <a class="px-3 py-1 rounded {% if status_filter == 'FAILED' %}bg-slate-800 text-white{% else %}bg-white border{% endif %}" href="/admin/upi-payments?status=FAILED">Failed</a>
+    </div>
+
+    <div class="bg-white rounded-xl shadow overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="text-left text-gray-600 border-b">
+            <th class="py-3 px-4">Payment ID</th>
+            <th class="py-3 px-4">User</th>
+            <th class="py-3 px-4">Coins</th>
+            <th class="py-3 px-4">Amount</th>
+            <th class="py-3 px-4">Status</th>
+            <th class="py-3 px-4">Submitted</th>
+            <th class="py-3 px-4">Created</th>
+            <th class="py-3 px-4">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for payment, payer in payments %}
+            <tr class="border-b">
+              <td class="py-3 px-4 font-mono text-xs">{{ payment.payment_id }}</td>
+              <td class="py-3 px-4">{{ payer.email }}</td>
+              <td class="py-3 px-4">{{ payment.coins }}</td>
+              <td class="py-3 px-4">₹{{ payment.amount }}</td>
+              <td class="py-3 px-4">{{ payment.status.value if payment.status.value is defined else payment.status }}</td>
+              <td class="py-3 px-4 text-gray-500">{{ payment.submitted_at.strftime('%Y-%m-%d %H:%M') if payment.submitted_at else 'Not yet' }}</td>
+              <td class="py-3 px-4 text-gray-500">{{ payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-' }}</td>
+              <td class="py-3 px-4">
+                {% if (payment.status.value if payment.status.value is defined else payment.status) == 'PENDING' %}
+                  <form action="/ui/admin/payments/{{ payment.payment_id }}/verify" method="post" class="inline" onsubmit="return confirm('Confirm you received ₹{{ payment.amount }} for this payment? Coins will be credited once.');">
+                    <button class="bg-emerald-600 text-white px-3 py-1 rounded text-xs" type="submit">Verify</button>
+                  </form>
+                  <form action="/ui/admin/payments/{{ payment.payment_id }}/reject" method="post" class="inline" onsubmit="return confirm('Reject this payment? Coins will not be added.');">
+                    <button class="bg-red-600 text-white px-3 py-1 rounded text-xs" type="submit">Reject</button>
+                  </form>
+                {% else %}
+                  <span class="text-gray-400">—</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td class="py-6 px-4 text-gray-500" colspan="8">No payments found.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,125 @@
+.upi-pay-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(26, 26, 39, 0.55);
+}
+
+.upi-pay-overlay.is-open {
+  display: flex;
+}
+
+.upi-pay-modal {
+  width: 100%;
+  max-width: 420px;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
+  padding: 24px;
+  text-align: center;
+}
+
+.upi-pay-modal h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.upi-pay-modal p,
+.upi-pay-row {
+  margin: 6px 0;
+  font-size: 14px;
+  color: #475569;
+}
+
+.upi-pay-row strong {
+  color: #0f172a;
+}
+
+.upi-pay-qr {
+  width: 220px;
+  height: 220px;
+  margin: 12px auto;
+  display: block;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 8px;
+}
+
+.upi-pay-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.upi-pay-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.upi-pay-actions button {
+  min-width: 120px;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.upi-pay-btn-primary {
+  background: #0ea5e9;
+  color: #fff;
+}
+
+.upi-pay-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.upi-pay-btn-outline {
+  background: #fff;
+  color: #334155;
+  border: 1px solid #e2e8f0 !important;
+}
+
+.upi-pay-success {
+  color: #047857;
+  font-weight: 600;
+}
+
+.upi-pay-error {
+  color: #b91c1c;
+}
+
+.affeeso-coins-menu {
+  width: 240px;
+}
+
+.js-coin-packages-list button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 8px;
+  border: none;
+  background: #e0f2fe;
+  color: #075985;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.js-coin-packages-list button:hover {
+  background: #0284c7;
+  color: #fff;
+}

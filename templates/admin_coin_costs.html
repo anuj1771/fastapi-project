@@ -68,6 +68,44 @@
         <button class="bg-indigo-600 text-white px-4 py-2 rounded text-sm" type="submit">Save changes</button>
       </div>
     </form>
+
+    <h2 class="text-xl font-bold mt-10 mb-2">Coin packages (UPI)</h2>
+    <p class="text-sm text-gray-600 mb-4">Change package prices and enable/disable them. Users always see prices from this table. Coins are only credited after you verify a UPI payment.</p>
+    <p class="text-sm mb-4"><a href="/admin/upi-payments" class="text-blue-700">Review UPI payments →</a></p>
+
+    <form action="/ui/admin/coin-packages/save" method="post" class="bg-white rounded-xl shadow p-6">
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-600 border-b">
+              <th class="py-2 pr-4">Package</th>
+              <th class="py-2 pr-4">Active</th>
+              <th class="py-2 pr-4">Price (₹)</th>
+              <th class="py-2">Last Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for pkg in packages %}
+              <tr class="border-b">
+                <td class="py-3 pr-4 font-medium">+{{ pkg.coins }} coins</td>
+                <td class="py-3 pr-4">
+                  <input type="checkbox" name="active__{{ pkg.id }}" {% if pkg.is_active %}checked{% endif %} />
+                </td>
+                <td class="py-3 pr-4">
+                  <input class="border rounded p-2 w-28" type="number" min="1" name="price__{{ pkg.id }}" value="{{ pkg.price }}" />
+                </td>
+                <td class="py-3 text-gray-500">
+                  {{ pkg.updated_at.strftime('%Y-%m-%d %H:%M') if pkg.updated_at else '-' }}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="mt-5 flex items-center justify-end gap-3">
+        <button class="bg-indigo-600 text-white px-4 py-2 rounded text-sm" type="submit">Save package prices</button>
+      </div>
+    </form>
   </main>
 </body>
 </html>

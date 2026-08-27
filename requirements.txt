@@ -6,3 +6,5 @@ python-jose[cryptography]
 passlib
 python-multipart
 jinja2
+python-dotenv
+qrcode[pil]

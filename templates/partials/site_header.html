@@ -16,15 +16,10 @@
       <div class="affeeso-header-actions">
         {% if user.role.value != 'admin' %}
           <span class="affeeso-coins">🪙 {{ user.coins }} coins</span>
-          <details class="affeeso-coins-dropdown" style="position:relative;">
+          <details class="affeeso-coins-dropdown js-coin-packages-dropdown" style="position:relative;">
             <summary>Get more coins</summary>
-            <div class="affeeso-coins-menu">
-              <form action="/ui/coins/earn" method="post">
-                <input type="hidden" name="next_path" value="{{ request.url.path }}" />
-                <button type="submit" name="amount" value="20">+20 coins</button>
-                <button type="submit" name="amount" value="40">+40 coins</button>
-                <button type="submit" name="amount" value="70">+70 coins</button>
-              </form>
+            <div class="affeeso-coins-menu js-coin-packages-list">
+              <p class="affeeso-hint">Loading packages…</p>
             </div>
           </details>
         {% endif %}
@@ -39,6 +34,9 @@
     {% endif %}
   </div>
 </header>
+{% if user and user.role.value != 'admin' %}
+  {% include 'partials/upi_payment_modal.html' %}
+{% endif %}
 {% if show_nav|default(true) %}
 <nav class="affeeso-nav">
   <div class="affeeso-container affeeso-nav-inner">

@@ -1,18 +1,23 @@
 from datetime import datetime, timedelta
 from email.message import EmailMessage
+import base64
+import io
 import json
 import logging
 import os
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 import secrets
 import smtplib
+import uuid
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
+import qrcode
 from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -20,6 +25,8 @@ from sqlalchemy.orm import Session, joinedload
 from app import auth, models, schemas
 from app.db import Base, engine
 from app.deps import get_current_user, get_db, require_admin
+
+load_dotenv()
 
 Base.metadata.create_all(bind=engine)
 
@@ -35,7 +42,11 @@ TEMPLATES = [
     "Can we schedule a short call to discuss partnership?",
 ]
 ADVERTISER_JOB_VISIBILITY_DAYS = 2
-COIN_TOP_UP_OPTIONS = {20, 40, 70}
+DEFAULT_COIN_PACKAGES: list[tuple[int, int]] = [
+    (20, 20),
+    (40, 35),
+    (70, 50),
+]
 
 COIN_ACTION_CREATE_JOB = "create_job_cost"
 COIN_ACTION_APPLY_JOB = "apply_job_cost"
@@ -105,9 +116,19 @@ def _ensure_job_tag_schema():
             Base.metadata.tables[table_name].create(bind=engine)
 
 
+def _ensure_payment_schema():
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if "coin_packages" not in tables:
+        models.CoinPackage.__table__.create(bind=engine)
+    if "payments" not in tables:
+        models.Payment.__table__.create(bind=engine)
+
+
 _ensure_runtime_schema()
 _ensure_profile_verification_schema()
 _ensure_job_tag_schema()
+_ensure_payment_schema()
 
 
 def _tags_to_json(tags: list) -> str:
@@ -209,6 +230,185 @@ def _charge_action_or_raise(db: Session, user: models.User, action_key: str) -> 
     cost = _get_coin_cost(db, action_key)
     _deduct_coins_or_raise(db, user.id, cost, action_key)
     return cost
+
+
+def _ensure_default_coin_packages(db: Session) -> None:
+    existing_coins = {
+        row.coins for row in db.query(models.CoinPackage.coins).all()
+    }
+    changed = False
+    now = datetime.utcnow()
+    for coins, price in DEFAULT_COIN_PACKAGES:
+        if coins in existing_coins:
+            continue
+        db.add(
+            models.CoinPackage(
+                coins=coins,
+                price=price,
+                currency="INR",
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        changed = True
+    if changed:
+        db.commit()
+
+
+def _get_upi_config() -> tuple[str, str]:
+    upi_id = os.getenv("UPI_ID", "").strip()
+    payee_name = os.getenv("UPI_PAYEE_NAME", "").strip()
+    if not upi_id or not payee_name:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="UPI is not configured. Set UPI_ID and UPI_PAYEE_NAME in .env.",
+        )
+    return upi_id, payee_name
+
+
+def _build_upi_uri(amount: int) -> str:
+    upi_id, payee_name = _get_upi_config()
+    query = urlencode(
+        {
+            "pa": upi_id,
+            "pn": payee_name,
+            "am": f"{int(amount):.2f}",
+            "cu": "INR",
+        },
+        quote_via=quote,
+    )
+    return f"upi://pay?{query}"
+
+
+def _qr_data_url(payload: str) -> str:
+    qr = qrcode.QRCode(version=1, box_size=8, border=2)
+    qr.add_data(payload)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def _payment_to_out(
+    payment: models.Payment, *, include_upi: bool = False
+) -> schemas.PaymentOut:
+    upi_id = None
+    payee_name = None
+    upi_uri = None
+    qr_data_url = None
+    if include_upi and payment.status == models.PaymentStatus.PENDING:
+        upi_id, payee_name = _get_upi_config()
+        upi_uri = _build_upi_uri(payment.amount)
+        qr_data_url = _qr_data_url(upi_uri)
+    return schemas.PaymentOut(
+        payment_id=payment.payment_id,
+        user_id=payment.user_id,
+        package_id=payment.package_id,
+        coins=payment.coins,
+        amount=payment.amount,
+        currency=payment.currency,
+        status=payment.status,
+        upi_id=upi_id,
+        payee_name=payee_name,
+        upi_uri=upi_uri,
+        qr_data_url=qr_data_url,
+        submitted_at=payment.submitted_at,
+        created_at=payment.created_at,
+        updated_at=payment.updated_at,
+    )
+
+
+def _get_owned_payment_or_404(
+    db: Session, payment_id: str, user: models.User
+) -> models.Payment:
+    payment = (
+        db.query(models.Payment)
+        .filter(models.Payment.payment_id == payment_id)
+        .first()
+    )
+    if not payment or payment.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
+    return payment
+
+
+def _verify_payment_and_credit(db: Session, payment_id: str) -> models.Payment:
+    payment = (
+        db.query(models.Payment)
+        .filter(models.Payment.payment_id == payment_id)
+        .first()
+    )
+    if not payment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
+
+    now = datetime.utcnow()
+    updated = (
+        db.query(models.Payment)
+        .filter(
+            models.Payment.id == payment.id,
+            models.Payment.status == models.PaymentStatus.PENDING,
+        )
+        .update(
+            {
+                models.Payment.status: models.PaymentStatus.PAID,
+                models.Payment.updated_at: now,
+            },
+            synchronize_session=False,
+        )
+    )
+    if updated != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Payment is not pending or was already processed.",
+        )
+
+    db.query(models.User).filter(models.User.id == payment.user_id).update(
+        {models.User.coins: models.User.coins + int(payment.coins)},
+        synchronize_session=False,
+    )
+    db.commit()
+    payment.status = models.PaymentStatus.PAID
+    payment.updated_at = now
+    return payment
+
+
+def _reject_payment(db: Session, payment_id: str) -> models.Payment:
+    payment = (
+        db.query(models.Payment)
+        .filter(models.Payment.payment_id == payment_id)
+        .first()
+    )
+    if not payment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
+
+    now = datetime.utcnow()
+    updated = (
+        db.query(models.Payment)
+        .filter(
+            models.Payment.id == payment.id,
+            models.Payment.status == models.PaymentStatus.PENDING,
+        )
+        .update(
+            {
+                models.Payment.status: models.PaymentStatus.FAILED,
+                models.Payment.updated_at: now,
+            },
+            synchronize_session=False,
+        )
+    )
+    if updated != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Payment is not pending or was already processed.",
+        )
+    db.commit()
+    payment.status = models.PaymentStatus.FAILED
+    payment.updated_at = now
+    return payment
 
 
 class ConnectionManager:
@@ -1632,23 +1832,175 @@ def ui_logout_get():
 @app.post("/ui/coins/earn")
 def ui_earn_coins(
     request: Request,
-    amount: int = Form(...),
+    amount: int = Form(0),
     next_path: str = Form("/dashboard"),
     db: Session = Depends(get_db),
 ):
     user = _get_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/?error=Please login first.", status_code=303)
-    if user.role == models.UserRole.ADMIN:
-        return RedirectResponse(url="/dashboard?error=Admin users cannot claim coins.", status_code=303)
-    if amount not in COIN_TOP_UP_OPTIONS:
-        return RedirectResponse(url="/dashboard?error=Invalid coin amount selected.", status_code=303)
-    user.coins = (user.coins or 0) + amount
-    db.commit()
     redirect_to = next_path if next_path.startswith("/") else "/dashboard"
     return RedirectResponse(
-        url=f"{redirect_to}?success=Added+{amount}+coins+to+your+wallet.",
+        url=f"{redirect_to}?error=Coin+purchases+require+UPI+payment.+Select+a+package+to+pay.",
         status_code=303,
+    )
+
+
+@app.get("/coin-packages", response_model=list[schemas.CoinPackageOut])
+def list_coin_packages(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _ensure_default_coin_packages(db)
+    query = db.query(models.CoinPackage)
+    if not _is_admin_user(current_user):
+        query = query.filter(models.CoinPackage.is_active.is_(True))
+    return query.order_by(models.CoinPackage.coins.asc()).all()
+
+
+@app.post("/payments/create", response_model=schemas.PaymentOut)
+def create_payment(
+    payload: schemas.PaymentCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if _is_admin_user(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin users cannot purchase coins.")
+    _ensure_default_coin_packages(db)
+    package = (
+        db.query(models.CoinPackage)
+        .filter(
+            models.CoinPackage.id == payload.package_id,
+            models.CoinPackage.is_active.is_(True),
+        )
+        .first()
+    )
+    if not package:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Coin package is not available.")
+    now = datetime.utcnow()
+    payment = models.Payment(
+        payment_id=str(uuid.uuid4()),
+        user_id=current_user.id,
+        package_id=package.id,
+        coins=int(package.coins),
+        amount=int(package.price),
+        currency=package.currency or "INR",
+        status=models.PaymentStatus.PENDING,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+    return _payment_to_out(payment, include_upi=True)
+
+
+@app.get("/payments/{payment_id}", response_model=schemas.PaymentOut)
+def get_payment(
+    payment_id: str,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    payment = _get_owned_payment_or_404(db, payment_id, current_user)
+    return _payment_to_out(payment, include_upi=payment.status == models.PaymentStatus.PENDING)
+
+
+@app.post("/payments/{payment_id}/submit", response_model=schemas.PaymentOut)
+def submit_payment(
+    payment_id: str,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    payment = _get_owned_payment_or_404(db, payment_id, current_user)
+    if payment.status != models.PaymentStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending payments can be submitted for verification.",
+        )
+    payment.submitted_at = datetime.utcnow()
+    payment.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(payment)
+    return _payment_to_out(payment, include_upi=False)
+
+
+@app.get("/admin/payments", response_model=list[schemas.AdminPaymentOut])
+def admin_list_payments(
+    status_filter: str | None = Query(default=None, alias="status"),
+    _: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    query = db.query(models.Payment, models.User.email).join(
+        models.User, models.User.id == models.Payment.user_id
+    )
+    if status_filter:
+        try:
+            status_value = models.PaymentStatus(status_filter.upper())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid payment status.")
+        query = query.filter(models.Payment.status == status_value)
+    rows = query.order_by(models.Payment.created_at.desc()).all()
+    return [
+        schemas.AdminPaymentOut(
+            payment_id=payment.payment_id,
+            user_id=payment.user_id,
+            user_email=email,
+            package_id=payment.package_id,
+            coins=payment.coins,
+            amount=payment.amount,
+            currency=payment.currency,
+            status=payment.status,
+            submitted_at=payment.submitted_at,
+            created_at=payment.created_at,
+            updated_at=payment.updated_at,
+        )
+        for payment, email in rows
+    ]
+
+
+@app.post("/admin/payments/{payment_id}/verify", response_model=schemas.AdminPaymentOut)
+def admin_verify_payment(
+    payment_id: str,
+    _: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    payment = _verify_payment_and_credit(db, payment_id)
+    user = db.query(models.User).filter(models.User.id == payment.user_id).first()
+    return schemas.AdminPaymentOut(
+        payment_id=payment.payment_id,
+        user_id=payment.user_id,
+        user_email=user.email if user else "",
+        package_id=payment.package_id,
+        coins=payment.coins,
+        amount=payment.amount,
+        currency=payment.currency,
+        status=payment.status,
+        submitted_at=payment.submitted_at,
+        created_at=payment.created_at,
+        updated_at=payment.updated_at,
+    )
+
+
+@app.post("/admin/payments/{payment_id}/reject", response_model=schemas.AdminPaymentOut)
+def admin_reject_payment(
+    payment_id: str,
+    _: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    payment = _reject_payment(db, payment_id)
+    user = db.query(models.User).filter(models.User.id == payment.user_id).first()
+    return schemas.AdminPaymentOut(
+        payment_id=payment.payment_id,
+        user_id=payment.user_id,
+        user_email=user.email if user else "",
+        package_id=payment.package_id,
+        coins=payment.coins,
+        amount=payment.amount,
+        currency=payment.currency,
+        status=payment.status,
+        submitted_at=payment.submitted_at,
+        created_at=payment.created_at,
+        updated_at=payment.updated_at,
     )
 
 
@@ -2103,6 +2455,7 @@ def ui_send_profile_approval(
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
     _ensure_default_coin_cost_settings(db)
+    _ensure_default_coin_packages(db)
     user = _get_user_from_cookie(request, db)
     advertiser_complete = False
     brand_complete = False
@@ -2733,10 +3086,12 @@ def ui_apply_job(
 @app.get("/admin/coin-costs", response_class=HTMLResponse)
 def admin_coin_costs_page(request: Request, db: Session = Depends(get_db)):
     _ensure_default_coin_cost_settings(db)
+    _ensure_default_coin_packages(db)
     admin_user = _get_user_from_cookie(request, db)
     if not admin_user or admin_user.role != models.UserRole.ADMIN:
         return RedirectResponse(url="/?error=Admin access required.", status_code=303)
     settings = db.query(models.CoinCostSetting).order_by(models.CoinCostSetting.key.asc()).all()
+    packages = db.query(models.CoinPackage).order_by(models.CoinPackage.coins.asc()).all()
     return templates.TemplateResponse(
         request,
         "admin_coin_costs.html",
@@ -2745,9 +3100,106 @@ def admin_coin_costs_page(request: Request, db: Session = Depends(get_db)):
             "user": admin_user,
             "display_name": admin_user.email.split("@")[0],
             "settings": settings,
+            "packages": packages,
             "success": request.query_params.get("success"),
             "error": request.query_params.get("error"),
         },
+    )
+
+
+@app.post("/ui/admin/coin-packages/save")
+async def ui_admin_save_coin_packages(request: Request, db: Session = Depends(get_db)):
+    _ensure_default_coin_packages(db)
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+
+    packages = db.query(models.CoinPackage).all()
+    data = await request.form()
+    changed = False
+    for row in packages:
+        enabled_raw = data.get(f"active__{row.id}")
+        price_raw = data.get(f"price__{row.id}")
+        is_active = str(enabled_raw).lower() in {"1", "true", "on", "yes"}
+        try:
+            price_val = int(price_raw) if price_raw is not None and str(price_raw).strip() else row.price
+        except ValueError:
+            return RedirectResponse(
+                url=f"/admin/coin-costs?error=Invalid+price+for+{row.coins}+coins.",
+                status_code=303,
+            )
+        if price_val < 1:
+            return RedirectResponse(
+                url="/admin/coin-costs?error=Package+price+must+be+at+least+1.",
+                status_code=303,
+            )
+        if row.is_active != is_active or int(row.price or 0) != price_val:
+            row.is_active = is_active
+            row.price = price_val
+            row.updated_at = datetime.utcnow()
+            changed = True
+
+    if changed:
+        db.commit()
+    return RedirectResponse(url="/admin/coin-costs?success=Coin+packages+updated.", status_code=303)
+
+
+@app.get("/admin/upi-payments", response_class=HTMLResponse)
+def admin_upi_payments_page(request: Request, db: Session = Depends(get_db)):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    status_filter = (request.query_params.get("status") or "").upper().strip()
+    query = (
+        db.query(models.Payment, models.User)
+        .join(models.User, models.User.id == models.Payment.user_id)
+        .order_by(models.Payment.created_at.desc())
+    )
+    if status_filter in {item.value for item in models.PaymentStatus}:
+        query = query.filter(models.Payment.status == models.PaymentStatus(status_filter))
+    rows = query.all()
+    return templates.TemplateResponse(
+        request,
+        "admin_payments.html",
+        {
+            "request": request,
+            "user": admin_user,
+            "display_name": admin_user.email.split("@")[0],
+            "payments": rows,
+            "status_filter": status_filter,
+            "success": request.query_params.get("success"),
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@app.post("/ui/admin/payments/{payment_id}/verify")
+def ui_admin_verify_payment(payment_id: str, request: Request, db: Session = Depends(get_db)):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    try:
+        _verify_payment_and_credit(db, payment_id)
+    except HTTPException as exc:
+        return RedirectResponse(url=f"/admin/upi-payments?error={exc.detail}", status_code=303)
+    return RedirectResponse(
+        url="/admin/upi-payments?success=Payment+verified+and+coins+credited.",
+        status_code=303,
+    )
+
+
+@app.post("/ui/admin/payments/{payment_id}/reject")
+def ui_admin_reject_payment(payment_id: str, request: Request, db: Session = Depends(get_db)):
+    admin_user = _get_user_from_cookie(request, db)
+    if not admin_user or admin_user.role != models.UserRole.ADMIN:
+        return RedirectResponse(url="/?error=Admin access required.", status_code=303)
+    try:
+        _reject_payment(db, payment_id)
+    except HTTPException as exc:
+        return RedirectResponse(url=f"/admin/upi-payments?error={exc.detail}", status_code=303)
+    return RedirectResponse(
+        url="/admin/upi-payments?success=Payment+rejected.",
+        status_code=303,
     )
 
 

@@ -347,3 +347,45 @@ class CoinCostSetting(Base):
     enabled = Column(Boolean, default=True, nullable=False)
     description = Column(String(255), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class PaymentStatus(str, Enum):
+    PENDING = "PENDING"
+    PAID = "PAID"
+    FAILED = "FAILED"
+
+
+class CoinPackage(Base):
+    __tablename__ = "coin_packages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    coins = Column(Integer, nullable=False, unique=True, index=True)
+    price = Column(Integer, nullable=False)
+    currency = Column(String(8), default="INR", nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    payment_id = Column(String(36), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    package_id = Column(Integer, ForeignKey("coin_packages.id"), nullable=False, index=True)
+    coins = Column(Integer, nullable=False)
+    amount = Column(Integer, nullable=False)
+    currency = Column(String(8), default="INR", nullable=False)
+    status = Column(
+        SqlEnum(PaymentStatus),
+        default=PaymentStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    submitted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user = relationship("User")
+    package = relationship("CoinPackage")

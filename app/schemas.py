@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from app.models import ProfileStatus, ProfileType, UserRole
+from app.models import PaymentStatus, ProfileStatus, ProfileType, UserRole
 
 
 class Token(BaseModel):
@@ -241,3 +241,54 @@ class InteractionMapOut(BaseModel):
     selected_user: InteractionUserRef
     connections: list[InteractionConnection]
     summary: InteractionSummary
+
+
+class CoinPackageOut(BaseModel):
+    id: int
+    coins: int
+    price: int
+    currency: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PaymentCreate(BaseModel):
+    package_id: int = Field(ge=1)
+
+
+class PaymentOut(BaseModel):
+    payment_id: str
+    user_id: int
+    package_id: int
+    coins: int
+    amount: int
+    currency: str
+    status: PaymentStatus
+    upi_id: Optional[str] = None
+    payee_name: Optional[str] = None
+    upi_uri: Optional[str] = None
+    qr_data_url: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AdminPaymentOut(BaseModel):
+    payment_id: str
+    user_id: int
+    user_email: str
+    package_id: int
+    coins: int
+    amount: int
+    currency: str
+    status: PaymentStatus
+    submitted_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime

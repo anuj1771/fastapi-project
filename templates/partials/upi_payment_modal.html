@@ -1,0 +1,26 @@
+<link rel="stylesheet" href="/static/css/upi-payment.css" />
+<div id="upiPaymentModal" class="upi-pay-overlay" role="dialog" aria-modal="true" aria-labelledby="upiPayTitle">
+  <div class="upi-pay-modal">
+    <div id="upiPayView">
+      <h3 id="upiPayTitle">Pay with UPI</h3>
+      <p class="upi-pay-row">Selected: <strong id="upiPayCoins">-</strong></p>
+      <p class="upi-pay-row">Amount: <strong id="upiPayAmount">-</strong></p>
+      <img id="upiPayQr" class="upi-pay-qr" alt="UPI payment QR code" />
+      <p class="upi-pay-row">UPI ID: <strong id="upiPayUpiId">-</strong></p>
+      <p class="upi-pay-row">Payment ID: <span id="upiPayId" class="upi-pay-id">-</span></p>
+      <p id="upiPayError" class="upi-pay-error"></p>
+      <div class="upi-pay-actions">
+        <button id="upiPayClose" type="button" class="upi-pay-btn-outline">Close</button>
+        <button id="upiPaySubmit" type="button" class="upi-pay-btn-primary">I Have Paid</button>
+      </div>
+    </div>
+    <div id="upiPayDone" hidden>
+      <h3>Payment submitted</h3>
+      <p class="upi-pay-success">Payment submitted for verification. Coins will be added after confirmation.</p>
+      <div class="upi-pay-actions">
+        <button id="upiPayDoneClose" type="button" class="upi-pay-btn-primary">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/static/js/upi-payment.js" defer></script>

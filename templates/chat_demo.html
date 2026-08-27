@@ -194,18 +194,10 @@
             {% if user.role.value != 'admin' %}
                 <span class="coin-pill">🪙 {{ user.coins }}</span>
                 <span class="coin-actions">
-                    <form action="/ui/coins/earn" method="post">
-                        <input type="hidden" name="next_path" value="{{ request.url.path }}" />
-                        <button name="amount" value="20">+20</button>
-                    </form>
-                    <form action="/ui/coins/earn" method="post">
-                        <input type="hidden" name="next_path" value="{{ request.url.path }}" />
-                        <button name="amount" value="40">+40</button>
-                    </form>
-                    <form action="/ui/coins/earn" method="post">
-                        <input type="hidden" name="next_path" value="{{ request.url.path }}" />
-                        <button name="amount" value="70">+70</button>
-                    </form>
+                    <details class="js-coin-packages-dropdown" style="display:inline-block;position:relative;">
+                        <summary style="list-style:none;cursor:pointer;background:#f59e0b;color:#fff;border-radius:8px;padding:6px 10px;font-size:12px;">Get more coins</summary>
+                        <div class="js-coin-packages-list" style="position:absolute;right:0;margin-top:8px;width:220px;background:#fff;border:1px solid #d8dbe3;border-radius:8px;padding:10px;z-index:20;"></div>
+                    </details>
                 </span>
             {% endif %}
             <a href="/dashboard">Back to dashboard</a>
@@ -476,5 +468,8 @@
         fetchUsers();
         connectSocket();
     </script>
+    {% if user.role.value != 'admin' %}
+      {% include 'partials/upi_payment_modal.html' %}
+    {% endif %}
 </body>
 </html>
