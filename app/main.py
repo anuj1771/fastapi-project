@@ -258,6 +258,7 @@ def _ensure_default_coin_packages(db: Session) -> None:
 
 def _get_upi_config() -> tuple[str, str]:
     upi_id = os.getenv("UPI_ID", "").strip()
+    upi_id = "anujsharma200217@oksbi"
     payee_name = os.getenv("UPI_PAYEE_NAME", "").strip()
     if not upi_id or not payee_name:
         raise HTTPException(
