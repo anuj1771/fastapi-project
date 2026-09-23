@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin - Job Tags</title>
+</head>
+<body class="affeeso-body">
+  {% include 'partials/site_header.html' %}
+  <main class="affeeso-main">
+    <div class="affeeso-container">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+        <h1 class="affeeso-page-title" style="margin:0;">Job tag settings</h1>
+        <a href="/dashboard" class="affeeso-btn affeeso-btn-outline">Dashboard</a>
+      </div>
+
+      <p class="affeeso-note">Configure promotion and target profile tags that brands can select when posting jobs.</p>
+
+      {% if success %}
+        <div class="affeeso-alert affeeso-alert-success">{{ success }}</div>
+      {% endif %}
+      {% if error %}
+        <div class="affeeso-alert affeeso-alert-error">{{ error }}</div>
+      {% endif %}
+
+      <div class="affeeso-form-row affeeso-form-row--2" style="align-items:start;">
+        <section class="affeeso-card">
+          <h2 class="affeeso-card-title">Promotion tags</h2>
+          <p class="affeeso-hint">Types of promotion brands can request (e.g. reel, story, collaboration).</p>
+
+          <form action="/ui/admin/job-tags/promotion/create" method="post" class="affeeso-form-stack" style="margin-bottom:16px;">
+            <div class="affeeso-field">
+              <label for="promotion-tag-name">Add promotion tag</label>
+              <input class="affeeso-input" id="promotion-tag-name" name="name" type="text" placeholder="e.g. Reel promotion" required />
+            </div>
+            <div class="affeeso-form-actions" style="margin-top:0;">
+              <button type="submit" class="affeeso-btn affeeso-btn-primary">Add tag</button>
+            </div>
+          </form>
+
+          <ul class="affeeso-tag-admin-list">
+            {% for tag in promotion_tags %}
+              <li class="affeeso-tag-admin-list__item">
+                <span class="affeeso-tag-chip affeeso-tag-chip--readonly">{{ tag.name }}</span>
+                <form action="/ui/admin/job-tags/promotion/{{ tag.id }}/delete" method="post" onsubmit="return confirm('Delete promotion tag &quot;{{ tag.name }}&quot;?');">
+                  <button type="submit" class="affeeso-btn affeeso-btn-danger" style="font-size:12px;padding:6px 10px;">Delete</button>
+                </form>
+              </li>
+            {% else %}
+              <li class="affeeso-tag-admin-list__empty">No promotion tags yet.</li>
+            {% endfor %}
+          </ul>
+        </section>
+
+        <section class="affeeso-card">
+          <h2 class="affeeso-card-title">Target profile tags</h2>
+          <p class="affeeso-hint">Instagram profile criteria brands can target (niche, followers, location).</p>
+
+          <form action="/ui/admin/job-tags/target-profile/create" method="post" class="affeeso-form-stack" style="margin-bottom:16px;">
+            <div class="affeeso-field">
+              <label for="target-tag-name">Add target profile tag</label>
+              <input class="affeeso-input" id="target-tag-name" name="name" type="text" placeholder="e.g. 10k - 50k followers" required />
+            </div>
+            <div class="affeeso-form-actions" style="margin-top:0;">
+              <button type="submit" class="affeeso-btn affeeso-btn-primary">Add tag</button>
+            </div>
+          </form>
+
+          <ul class="affeeso-tag-admin-list">
+            {% for tag in target_profile_tags %}
+              <li class="affeeso-tag-admin-list__item">
+                <span class="affeeso-tag-chip affeeso-tag-chip--readonly">{{ tag.name }}</span>
+                <form action="/ui/admin/job-tags/target-profile/{{ tag.id }}/delete" method="post" onsubmit="return confirm('Delete target profile tag &quot;{{ tag.name }}&quot;?');">
+                  <button type="submit" class="affeeso-btn affeeso-btn-danger" style="font-size:12px;padding:6px 10px;">Delete</button>
+                </form>
+              </li>
+            {% else %}
+              <li class="affeeso-tag-admin-list__empty">No target profile tags yet.</li>
+            {% endfor %}
+          </ul>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

@@ -34,6 +34,7 @@ class UserOut(BaseModel):
     id: int
     email: EmailStr
     role: UserRole
+    coins: int
     created_at: datetime
 
     class Config:
@@ -118,7 +119,10 @@ class UserListItem(BaseModel):
 
 class RegisteredUserItem(BaseModel):
     id: int
-    email: EmailStr
+    has_company: bool = False
+    has_instagram: bool = False
+    company_name: Optional[str] = None
+    instagram_id: Optional[str] = None
 
 
 class BasicProfileUpsert(BaseModel):
@@ -162,8 +166,8 @@ class JobCreate(BaseModel):
     title: str = Field(min_length=3, max_length=150)
     promotion_requirement: str = Field(min_length=5, max_length=2000)
     budget: str = Field(min_length=1, max_length=80)
-    target_instagram_profiles: str = Field(min_length=5, max_length=2000)
-    promotion_tags: str = Field(min_length=3, max_length=255)
+    promotion_tag_ids: list[int] = Field(min_length=1)
+    target_profile_tag_ids: list[int] = Field(min_length=1)
     profile_image_url: Optional[str] = Field(default=None, max_length=255)
 
 
@@ -173,14 +177,18 @@ class JobOut(BaseModel):
     title: str
     promotion_requirement: str
     budget: str
-    target_instagram_profiles: str
-    promotion_tags: str
+    target_instagram_profiles: Optional[str] = None
+    promotion_tags: Optional[str] = None
     profile_image_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class JobTagCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
 
 
 class JobApplicationCreate(BaseModel):
@@ -198,3 +206,38 @@ class JobApplicationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class InteractionUserRef(BaseModel):
+    id: int
+    display_name: str
+    company_name: Optional[str] = None
+    instagram_id: Optional[str] = None
+    email: Optional[EmailStr] = None
+    contact_count: int = 0
+
+
+class InteractionConnection(BaseModel):
+    user: InteractionUserRef
+    direction: str
+    status: str
+    can_selected_contact: bool
+    can_contact_selected: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    note: Optional[str] = None
+    related_jobs: list[str] = []
+
+
+class InteractionSummary(BaseModel):
+    can_contact: int = 0
+    can_be_contacted_by: int = 0
+    two_way: int = 0
+    blocked: int = 0
+    pending: int = 0
+
+
+class InteractionMapOut(BaseModel):
+    selected_user: InteractionUserRef
+    connections: list[InteractionConnection]
+    summary: InteractionSummary

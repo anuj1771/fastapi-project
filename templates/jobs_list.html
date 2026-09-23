@@ -3,37 +3,32 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Jobs - BrandBridge</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>Jobs - AffeeSo</title>
 </head>
-<body class="bg-slate-100 min-h-screen">
-  <main class="max-w-6xl mx-auto px-6 py-10">
-    <div class="mb-4 bg-white rounded-xl shadow px-4 py-3 flex items-center justify-between">
-      <span class="text-sm text-gray-700 font-medium">BrandBridge</span>
-      <div class="flex items-center gap-3">
-        <span class="text-sm text-emerald-700">Logged in as: {{ display_name }} ({{ user.email }})</span>
-        <form action="/ui/logout" method="post">
-          <button type="submit" class="text-sm bg-red-600 text-white px-3 py-1 rounded">Logout</button>
-        </form>
+<body class="affeeso-body">
+  {% include 'partials/site_header.html' %}
+  <main class="affeeso-main">
+    <div class="affeeso-container">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+        <h1 class="affeeso-page-title" style="margin:0;">Available jobs</h1>
+        <a href="/dashboard" class="affeeso-btn affeeso-btn-outline">Dashboard</a>
       </div>
-    </div>
-
-    <div class="flex items-center justify-between mb-4">
-      <h1 class="text-2xl font-bold">Available Jobs</h1>
-      <a href="/dashboard" class="text-sm text-blue-700">Back to Dashboard</a>
-    </div>
-    <p class="text-sm text-gray-600 mb-4">Newest jobs are shown first.</p>
+    {% if is_admin %}
+      <p class="text-sm text-gray-600 mb-4">Admin view: all jobs are visible in full history.</p>
+    {% else %}
+      <p class="text-sm text-gray-600 mb-4">Newest jobs are shown first. Advertisers can view and apply only for jobs posted in last {{ advertiser_visibility_days }} days.</p>
+    {% endif %}
 
     {% if success %}
-      <div class="mb-4 rounded border border-green-200 bg-green-50 p-3 text-green-700 text-sm">{{ success }}</div>
+      <div class="affeeso-alert affeeso-alert-success">{{ success }}</div>
     {% endif %}
     {% if error %}
-      <div class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
+      <div class="affeeso-alert affeeso-alert-error">{{ error }}</div>
     {% endif %}
 
     <div class="space-y-5">
       {% for job in jobs %}
-        <section class="bg-white rounded-xl shadow p-6">
+        <section class="affeeso-card">
           <div class="flex items-start justify-between gap-4">
             <div>
               <h2 class="text-xl font-semibold">{{ job.title }}</h2>
@@ -48,8 +43,30 @@
           <div class="mt-4 grid md:grid-cols-2 gap-4 text-sm">
             <p><span class="font-semibold">Promotion Need:</span> {{ job.promotion_requirement }}</p>
             <p><span class="font-semibold">Budget:</span> {{ job.budget }}</p>
-            <p><span class="font-semibold">Target Profiles:</span> {{ job.target_instagram_profiles }}</p>
-            <p><span class="font-semibold">Tags:</span> {{ job.promotion_tags }}</p>
+            <div>
+              <span class="affeeso-status-label">Target profiles</span>
+              {% if job.target_profile_tag_items %}
+                <div class="affeeso-tag-list">
+                  {% for tag in job.target_profile_tag_items %}
+                    <span class="affeeso-tag-chip">{{ tag.name }}</span>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <p style="margin:6px 0 0;font-size:14px;color:var(--text-muted);">{{ job.target_profile_labels or '—' }}</p>
+              {% endif %}
+            </div>
+            <div>
+              <span class="affeeso-status-label">Promotion tags</span>
+              {% if job.promotion_tag_items %}
+                <div class="affeeso-tag-list">
+                  {% for tag in job.promotion_tag_items %}
+                    <span class="affeeso-tag-chip">{{ tag.name }}</span>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <p style="margin:6px 0 0;font-size:14px;color:var(--text-muted);">{{ job.promotion_tag_labels or '—' }}</p>
+              {% endif %}
+            </div>
           </div>
 
           {% set existing = applied_map.get(job.id) %}
@@ -58,16 +75,72 @@
               Applied already. Your note: {{ existing.description }}
             </div>
           {% else %}
-            <form action="/ui/jobs/{{ job.id }}/apply" method="post" class="mt-4 space-y-2">
+            <form action="/ui/jobs/{{ job.id }}/apply" method="post" class="mt-4 space-y-2 js-paid-action" data-cost="{{ coin_costs.apply_job_cost or 0 }}" data-action-label="Apply to Job">
               <textarea class="w-full border rounded p-2 min-h-24" name="description" placeholder="Write why you are a good fit for this job..." required></textarea>
               <button class="bg-emerald-600 text-white px-4 py-2 rounded text-sm">Apply</button>
             </form>
           {% endif %}
         </section>
       {% else %}
-        <div class="bg-white rounded-xl shadow p-6 text-gray-600">No jobs posted yet.</div>
+        <div class="affeeso-card" style="color:var(--text-muted);">No jobs posted yet.</div>
       {% endfor %}
     </div>
+    </div>
   </main>
+  <div id="coinModal" class="fixed inset-0 hidden items-center justify-center bg-slate-900/50 px-4">
+    <div class="w-full max-w-md rounded-xl bg-white shadow-xl border border-slate-200">
+      <div class="px-6 pt-6 pb-3 text-center">
+        <h3 id="coinModalTitle" class="text-lg font-semibold text-slate-900">Popup title</h3>
+        <p id="coinModalText" class="mt-2 text-sm text-slate-600">This action will cost coins.</p>
+      </div>
+      <div class="px-6 pb-6 flex gap-3 justify-center">
+        <button id="coinModalCancel" type="button" class="w-32 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Close</button>
+        <button id="coinModalOk" type="button" class="w-32 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">Ok</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const coinModal = document.getElementById("coinModal");
+    const coinModalTitle = document.getElementById("coinModalTitle");
+    const coinModalText = document.getElementById("coinModalText");
+    const coinModalCancel = document.getElementById("coinModalCancel");
+    const coinModalOk = document.getElementById("coinModalOk");
+
+    function openCoinModal({ title, text, onOk }) {
+      coinModalTitle.textContent = title || "Confirm";
+      coinModalText.textContent = text || "";
+      coinModal.classList.remove("hidden");
+      coinModal.classList.add("flex");
+
+      const cleanup = () => {
+        coinModal.classList.add("hidden");
+        coinModal.classList.remove("flex");
+        coinModalOk.onclick = null;
+        coinModalCancel.onclick = null;
+      };
+
+      coinModalCancel.onclick = () => cleanup();
+      coinModalOk.onclick = () => {
+        cleanup();
+        onOk && onOk();
+      };
+    }
+
+    document.querySelectorAll(".js-paid-action").forEach((form) => {
+      form.addEventListener("submit", (e) => {
+        const isAdmin = {{ 'true' if is_admin else 'false' }};
+        if (isAdmin) return;
+        const cost = Number(form.dataset.cost || "0");
+        if (!Number.isFinite(cost) || cost <= 0) return;
+        e.preventDefault();
+        const label = form.dataset.actionLabel || "This action";
+        openCoinModal({
+          title: "Popup title",
+          text: `${label} will cost ${cost} coins. Do you want to continue?`,
+          onOk: () => form.submit(),
+        });
+      });
+    });
+  </script>
 </body>
 </html>

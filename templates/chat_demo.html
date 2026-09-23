@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BrandBridge Chat</title>
+    <title>AffeeSo Chat</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -23,6 +23,25 @@
             align-items: center;
         }
         .topbar a { color: #2463eb; text-decoration: none; }
+        .coin-pill {
+            background: #fef3c7;
+            color: #92400e;
+            font-weight: 600;
+            font-size: 13px;
+            padding: 4px 10px;
+            border-radius: 999px;
+        }
+        .coin-actions form { display: inline; }
+        .coin-actions button {
+            border: 0;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
+            background: #f59e0b;
+            color: #ffffff;
+            cursor: pointer;
+            margin-right: 6px;
+        }
         .layout {
             display: grid;
             grid-template-columns: 320px 1fr;
@@ -66,7 +85,32 @@
         .contact:hover { background: #eef4ff; }
         .contact.active { background: #dbeafe; }
         .contact .name { font-size: 14px; color: #0f172a; font-weight: 600; }
-        .contact .meta { font-size: 12px; color: #64748b; margin-top: 4px; }
+        .identity {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .identity-line {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 6px;
+            line-height: 1.35;
+        }
+        .identity-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #64748b;
+        }
+        .identity-value {
+            font-size: 14px;
+            font-weight: 600;
+            color: #0f172a;
+        }
+        .profile .identity-label { color: #64748b; }
+        #chatTitle .identity-value { font-size: 15px; }
         .chat {
             display: flex;
             flex-direction: column;
@@ -145,14 +189,31 @@
 </head>
 <body>
     <div class="topbar">
-        <strong>BrandBridge Chat</strong>
-        <a href="/dashboard">Back to dashboard</a>
+        <strong>AffeeSo Chat</strong>
+        <div>
+            {% if user.role.value != 'admin' %}
+                <span class="coin-pill">🪙 {{ user.coins }}</span>
+                <span class="coin-actions">
+                    <form action="/ui/coins/earn" method="post">
+                        <input type="hidden" name="next_path" value="{{ request.url.path }}" />
+                        <button name="amount" value="20">+20</button>
+                    </form>
+                    <form action="/ui/coins/earn" method="post">
+                        <input type="hidden" name="next_path" value="{{ request.url.path }}" />
+                        <button name="amount" value="40">+40</button>
+                    </form>
+                    <form action="/ui/coins/earn" method="post">
+                        <input type="hidden" name="next_path" value="{{ request.url.path }}" />
+                        <button name="amount" value="70">+70</button>
+                    </form>
+                </span>
+            {% endif %}
+            <a href="/dashboard">Back to dashboard</a>
+        </div>
     </div>
     <div class="layout">
         <aside class="sidebar">
-            <div class="profile">
-                Logged in as <strong>{{ user.email }}</strong>
-            </div>
+            <div class="profile" id="currentUserProfile"></div>
             <div class="search-box">
                 <input id="searchInput" placeholder="Search user..." />
             </div>
@@ -186,9 +247,12 @@
 
     <script>
         const currentUserId = Number("{{ user.id }}");
+        const currentChatProfile = {{ current_chat_profile|tojson }};
+        const wsToken = {{ ws_token|tojson }};
         const contactList = document.getElementById("contactList");
         const searchInput = document.getElementById("searchInput");
         const chatTitle = document.getElementById("chatTitle");
+        const currentUserProfile = document.getElementById("currentUserProfile");
         const socketStatus = document.getElementById("socketStatus");
         const messages = document.getElementById("messages");
         const messageInput = document.getElementById("messageInput");
@@ -212,9 +276,53 @@
             return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
         }
 
+        function profileIdentityLines(user) {
+            const lines = [];
+            if (!user) {
+                return lines;
+            }
+            const companyName = String(user.company_name || "").trim();
+            const instagramId = String(user.instagram_id || "").trim();
+            if (user.has_company && companyName) {
+                lines.push({ label: "Company", value: companyName });
+            }
+            if (user.has_instagram && instagramId) {
+                lines.push({ label: "Instagram", value: instagramId });
+            }
+            return lines;
+        }
+
+        function renderIdentityHtml(user) {
+            const lines = profileIdentityLines(user);
+            if (!lines.length) {
+                return '<div class="identity-value">User</div>';
+            }
+            return `
+                <div class="identity">
+                    ${lines.map((line) => `
+                        <div class="identity-line">
+                            <span class="identity-label">${escapeHtml(line.label)}</span>
+                            <span class="identity-value">${escapeHtml(line.value)}</span>
+                        </div>
+                    `).join("")}
+                </div>
+            `;
+        }
+
+        function searchableText(user) {
+            return profileIdentityLines(user)
+                .map((line) => `${line.label} ${line.value}`)
+                .join(" ")
+                .toLowerCase();
+        }
+
+        function renderCurrentUserProfile() {
+            currentUserProfile.innerHTML = renderIdentityHtml(currentChatProfile);
+        }
+
         function renderContacts() {
             const query = searchInput.value.trim().toLowerCase();
-            const filtered = users.filter((u) => u.email.toLowerCase().includes(query));
+            const filtered = users.filter((u) => searchableText(u).includes(query));
             if (!filtered.length) {
                 contactList.innerHTML = '<div class="muted" style="padding: 12px;">No users found</div>';
                 return;
@@ -223,8 +331,7 @@
             contactList.innerHTML = filtered
                 .map((u) => `
                     <button class="contact ${u.id === activePartnerId ? "active" : ""}" data-id="${u.id}">
-                        <div class="name">${escapeHtml(u.email)}</div>
-                        <div class="meta">User ID: ${u.id}</div>
+                        ${renderIdentityHtml(u)}
                     </button>
                 `)
                 .join("");
@@ -285,7 +392,7 @@
         async function selectPartner(partnerId) {
             activePartnerId = partnerId;
             const partner = users.find((u) => u.id === partnerId);
-            chatTitle.textContent = partner ? partner.email : `User ${partnerId}`;
+            chatTitle.innerHTML = partner ? renderIdentityHtml(partner) : renderIdentityHtml(null);
             sendBtn.disabled = false;
             if (!historyByPartner[partnerId]) {
                 await fetchHistory(partnerId);
@@ -305,17 +412,31 @@
             }
         }
 
+        let reconnectAttempts = 0;
+
         function connectSocket() {
+            if (!wsToken) {
+                socketStatus.textContent = "Login required";
+                socketStatus.className = "status offline";
+                return;
+            }
             const protocol = location.protocol === "https:" ? "wss" : "ws";
-            socket = new WebSocket(`${protocol}://${location.host}/ws/chat`);
+            const wsUrl = `${protocol}://${location.host}/ws/chat?token=${encodeURIComponent(wsToken)}`;
+            socket = new WebSocket(wsUrl);
 
             socket.onopen = () => {
+                reconnectAttempts = 0;
                 socketStatus.textContent = "Connected";
                 socketStatus.className = "status online";
             };
             socket.onclose = () => {
                 socketStatus.textContent = "Disconnected";
                 socketStatus.className = "status offline";
+                reconnectAttempts += 1;
+                if (reconnectAttempts >= 5) {
+                    socketStatus.textContent = "Session expired — refresh or log in again";
+                    return;
+                }
                 setTimeout(connectSocket, 1500);
             };
             socket.onerror = () => {
@@ -351,6 +472,7 @@
             }
         });
 
+        renderCurrentUserProfile();
         fetchUsers();
         connectSocket();
     </script>
